@@ -1,7 +1,7 @@
 xmemUSBFS
 =========
 
-FAT 16/32 module for xmemUSB
+FAT 16/32 module for <A HREF='https://github.com/xxxajk/xmemUSB'>xmemUSB</A>
 
 PLEASE NOTE:
 f-variants, e.g. fopen(), can't be implemented due to the limitations of the
