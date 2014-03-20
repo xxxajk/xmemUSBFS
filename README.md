@@ -9,11 +9,33 @@ Arduino libc.
 The C API is not completed yet, thus functionality at this point is minimal.
 
 Currently available standard libc calls:
-open()
-creat()
-read()
-write()
-close()
+open
+creat
+read
+write
+close
 
 More coming soon, I just need to finish writing the wrappers.
+flush
+eof
+truncate
+tell
+lseek
 
+opendir
+closedir
+readdir
+
+stat
+chmod
+utime
+
+rename
+unlink
+mkdir
+sync
+
+Non-standard:<br>
+fs_ready / fs_getfree could make into int statvfs(const char *path, struct statvfs *buf);<br>
+fs_mount_lbl<br>
+fs_mountcount<br>

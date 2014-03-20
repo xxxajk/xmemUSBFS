@@ -172,18 +172,8 @@ const char *_fs_util_trunkpath(const char *path, uint8_t vol) {
         char *s = fs_mount_lbl(vol);
         if(s != NULL) {
                 pathtrunc += strlen(s);
-                // printf("mount point '%s' filename '%s'\r\n",s , pathtrunc);
                 free(s);
         }
-        //        pathtrunc++; // skip first '/'
-
-          //      while(*pathtrunc) {
-            //            if(*pathtrunc == '/') {
-              //          break;
-                //}
-                //pathtrunc++;
-        //}
-        //if(!*pathtrunc) pathtrunc = path; // single '/'
         return pathtrunc;
 }
 
