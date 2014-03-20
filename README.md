@@ -15,21 +15,23 @@ read
 write
 close
 
-More coming soon, I just need to finish writing the wrappers.
+More coming soon, I just need to finish writing the wrappers.<br>
+FD related:
 flush
 eof
 truncate
 tell
 lseek
 
+Dir related:
 opendir
 closedir
 readdir
-
 stat
 chmod
 utime
 
+Utility related:
 rename
 unlink
 mkdir
