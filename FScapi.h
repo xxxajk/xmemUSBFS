@@ -5,8 +5,8 @@
  * Created on March 4, 2014, 11:07 PM
  */
 
-#ifndef CAPI_H
-#define	CAPI_H
+#ifndef USBFAT_FS_CAPI_H
+#define	USBFAT_FS_CAPI_H
 
 #ifdef	__cplusplus
 extern "C" {
@@ -76,5 +76,5 @@ extern int readdir(uint8_t fd, DIRINFO *data);
 }
 #endif
 
-#endif	/* CAPI_H */
+#endif	/* USBFAT_FS_CAPI_H */
 
