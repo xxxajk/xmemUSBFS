@@ -6,13 +6,15 @@
 # ...and then comment out the following line
 #BOARD = mega
 BOARD = teensypp2
-# set your Arduino tty port here
+# set your Arduino PROGRAMMING port here
 #PORT = /dev/ttyUSB0
 PORT = /dev/ttyACM0
 
-# Adjust to your needs
+# Adjust to your needs (Should be Zero)
+
+EXTRA_FLAGS += -D CONSOLE=0
 #145040 uS
-EXTRA_FLAGS = -DLCD_USING_SPI=1 
+EXTRA_FLAGS += -DLCD_USING_SPI=1 
 # How many files to open at once
 EXTRA_FLAGS += -D _FS_LOCK=1
 # How many volumes allowed to mount
@@ -31,6 +33,7 @@ EXTRA_FLAGS += -D _USE_FASTSEEK=0
 
 # Uncomment to enable debugging of USB HOST code
 #EXTRA_FLAGS += -D DEBUG_USB_HOST
+
 
 # Leave these alone.
 EXTRA_FLAGS += -D _USE_LFN=3

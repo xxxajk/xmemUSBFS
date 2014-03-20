@@ -32,8 +32,8 @@
 #define USE_MULTIPLE_APP_API 16
 #endif
 // Set this to 0 if you don't own the lcd panel or have not modified it to use SPI.
-// Since the device is 'Dumb' it also does not hurt to leave it as-is either.
-#define _USE_LCD 1
+// Since LCD does not safely support teensy, define as 0
+#define _USE_LCD 0
 #define _USE_FS 1
 
 #include <xmem.h>
@@ -87,7 +87,8 @@ void test_main(void) {
         uint32_t numlo;
         uint32_t numhi;
         char fancy[4];
-        uint8_t fd;
+        int fd;
+        uint8_t fdc;
         uint8_t *ptr;
         uint8_t slots = 0;
         uint8_t spin = 0;
@@ -110,16 +111,16 @@ void test_main(void) {
         printf_P(PSTR("Maximum Volume mount count :%i\r\n"), _VOLUMES);
         printf_P(PSTR("\r\nTesting task started. PID=%i"), this_task);
         for (;;) {
-                fd = _VOLUMES;
+                fdc = _VOLUMES;
                 uint8_t last = _VOLUMES;
                 printf_P(PSTR("\r\nWaiting for '/' to mount..."));
-                while (fd == _VOLUMES) {
+                while (fdc == _VOLUMES) {
                         slots = fs_mountcount();
                         if (slots != last) {
                                 last = slots;
                                 if (slots != 0) {
                                         printf_P(PSTR(" \r\n"), ptr);
-                                        fd = fs_ready("/");
+                                        fdc = fs_ready("/");
                                         for (uint8_t x = 0; x < _VOLUMES; x++) {
                                                 ptr = (uint8_t *)fs_mount_lbl(x);
                                                 if (ptr != NULL) {
@@ -127,7 +128,7 @@ void test_main(void) {
                                                         free(ptr);
                                                 }
                                         }
-                                        if (fd == _VOLUMES) printf_P(PSTR("\r\nWaiting for '/' to mount..."));
+                                        if (fdc == _VOLUMES) printf_P(PSTR("\r\nWaiting for '/' to mount..."));
                                 }
                         }
                         printf_P(PSTR(" \b%c\b"), fancy[spin]);
@@ -138,62 +139,64 @@ void test_main(void) {
                 fre = fs_getfree("/");
                 if (fre > 2097152) {
                         printf_P(PSTR("Removing '/HeLlO.tXt' file... "));
-                        res = fs_unlink("/hello.txt");
+                        res = unlink("/hello.txt");
                         printf_P(PSTR("completed with %i\r\n"), res);
                         printf_P(PSTR("\r\nStarting Write test...\r\n"));
-                        fd = fs_open("/HeLlO.tXt", "w");
-                        if (fd) {
+                        fd = open("/HeLlO.tXt", O_WRONLY | O_CREAT);
+                        if (fd>0) {
                                 printf_P(PSTR("File opened OK %i\r\n"), fd);
+                                char tst[]="                                        \b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b";
                                 for (int i = 0; i < 26; i++) {
-                                        fs_write(fd, "                                        \b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b");
+                                        write(fd, tst, strlen(tst));
                                 }
-                                res = fs_write(fd, "]-[ello \\/\\/orld!\r\n");
-                                printf_P(PSTR("Write result = %u, "), res);
-                                res = fs_close(fd);
-                                printf_P(PSTR("File closed result = %u.\r\n"), res);
+                                char hi[]="]-[ello \\/\\/orld!\r\n";
+                                res = write(fd, hi, strlen(hi));
+                                printf_P(PSTR("Write result = %i, "), res);
+                                res = close(fd);
+                                printf_P(PSTR("File closed result = %i.\r\n"), res);
                         } else {
-                                printf_P(PSTR("xError %u (%u)\r\n"), res, fs_err[this_task]);
+                                printf_P(PSTR("xError %d (%u)\r\n"), fd, fs_err[this_task]);
                         }
                         delay(1000);
                         printf_P(PSTR("\r\nStarting Read test...\r\n"));
-                        fd = fs_open("/hElLo.TxT", "r");
-                        if (fd) {
+                        fd = open("/hElLo.TxT", O_RDONLY);
+                        if (fd>0) {
                                 res = 1;
                                 printf_P(PSTR("File opened OK, displaying contents...\r\n"));
 
                                 while (res > 0) {
-                                        res = fs_read(fd, data, 128);
+                                        res = read(fd, data, 128);
                                         for (int i = 0; i < res; i++) {
                                                 if (data[i] == '\n') Serial.write('\r');
                                                 if (data[i] != '\r') Serial.write(data[i]);
                                         }
                                 }
                                 printf_P(PSTR("\r\nRead completed, last read result = %i (%i), "), res, fs_err[this_task]);
-                                res = fs_close(fd);
+                                res = close(fd);
                                 printf_P(PSTR("file close result = %i.\r\nTesting rename\r\n"), res);
-                                fs_unlink("/newtest.txt");
-                                res = fs_rename("/HeLlO.tXt", "/newtest.txt");
+                                unlink("/newtest.txt");
+                                res = rename("/HeLlO.tXt", "/newtest.txt");
                                 printf_P(PSTR("file rename result = %i.\r\n"), res);
                         } else {
                                 printf_P(PSTR("File not found.\r\n"));
                         }
                         printf_P(PSTR("\r\nRemoving '/1MB.bin' file... "));
-                        res = fs_unlink("/1MB.bin");
+                        res = unlink("/1MB.bin");
                         printf_P(PSTR("completed with %i\r\n"), res);
                         printf_P(PSTR("1MB write timing test "));
 
                         //for (int i = 0; i < 128; i++) data[i] = i & 0xff;
-                        fd = fs_open("/1MB.bin", "w");
-                        if (fd) {
+                        fd = open("/1MB.bin", O_WRONLY | O_CREAT);
+                        if (fd>0) {
                                 int i = 0;
                                 xmem::Sleep(500);
                                 start = millis();
                                 for (; i < 8192; i++) {
-                                        res = fs_write(fd, data, 128);
+                                        res = write(fd, data, 128);
                                         if (fs_err[this_task]) break;
                                 }
                                 printf_P(PSTR(" %i writes, (%i), "), i, fs_err[this_task]);
-                                res = fs_close(fd);
+                                res = close(fd);
                                 end = millis();
                                 wt = end - start;
                                 printf_P(PSTR("(%i), "), fs_err[this_task]);
@@ -203,19 +206,19 @@ void test_main(void) {
 
                         printf_P(PSTR("1MB read timing test "));
 
-                        fd = fs_open("/1MB.bin", "r");
-                        if (fd) {
+                        fd = open("/1MB.bin", O_RDONLY);
+                        if (fd>0) {
                                 xmem::Sleep(500);
                                 start = millis();
                                 res = 1;
                                 int i = 0;
                                 while (res > 0) {
-                                        res = fs_read(fd, data, 128);
+                                        res = read(fd, data, 128);
                                         i++;
                                 }
                                 printf_P(PSTR("%i reads, (%i), "), i, fs_err[this_task]);
                                 end = millis();
-                                res = fs_close(fd);
+                                res = close(fd);
                                 rt = end - start;
                                 printf_P(PSTR(" %lu ms (%lu sec)\r\n"), rt, (500 + rt) / 1000UL);
                         }
@@ -224,11 +227,11 @@ void test_main(void) {
                         printf_P(PSTR("Not enough free space or write protected."));
                 }
 
-                fd = fs_opendir("/");
-                if (fd) {
+                fd = opendir("/");
+                if (fd>0) {
                         printf_P(PSTR("Directory of '/'\r\n"));
                         do {
-                                res = fs_readdir(fd, de);
+                                res = readdir(fd, de);
 
                                 if (!res) {
                                         DateTime tstamp(de->fdate, de->ftime);
@@ -268,7 +271,7 @@ void test_main(void) {
                                 }
 
                         } while (!res);
-                        fs_closedir(fd);
+                        closedir(fd);
 
                         fre = fs_getfree("/");
                         numlo = fre % 1000000000llu;

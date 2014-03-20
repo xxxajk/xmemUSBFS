@@ -9,7 +9,8 @@
 #define	XMEMUSBFS_H
 
 #include <xmemUSBFSdefs.h>
-
+#include "FScapi.h"
+#include "fcntl.h"
 /*
  *
  * These are not needed, we use absolute paths, and can track current path per task and track our own errors.
