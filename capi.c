@@ -278,6 +278,16 @@ ATR int close(int fd) {
  * @return amount of data read, less than 0 indicates error
  */
 ATR int read(int fd, void *buf, size_t count) {
+        if(fd == 0) {
+                int i=0;
+                unsigned char *b=(char *)buf;
+                while(i<count) {
+                        *b=fgetc(stdin)&0xff;
+                        b++;
+                        i++;
+                }
+                return count;
+        }
         return USBFAT_FSread(fd, buf, count);
 }
 
@@ -290,6 +300,17 @@ ATR int read(int fd, void *buf, size_t count) {
  * @return count of bytes written, less than 0 indicates error
  */
 ATR int write(int fd, const void *buf, size_t count) {
+        if(fd < 3) {
+                int i=0;
+                unsigned char *b=(char *)buf;
+                while(i < count) {
+                        if(fd == 1) fputc(*b, stdout);
+                        if(fd == 2) fputc(*b, stderr);
+                        b++;
+                        i++;
+                }
+                return count;
+        }
         return USBFAT_FSwrite(fd, buf, count);
 }
 
