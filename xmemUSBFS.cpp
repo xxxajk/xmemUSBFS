@@ -143,14 +143,13 @@ typedef struct {
 
 // fs errno...
 uint8_t fs_err[USE_MULTIPLE_APP_API];
-// fs handles...
-
-static FIL *fhandles[_FS_LOCK];
-static DIR *dhandles[_FS_LOCK];
 // NOTE: memory stream transaction pipes must be on the AVR RAM, therefore, global
 // They are also static so that they are not reachable from other modules
 static memory_stream to_usb_fs_task;
 static memory_stream from_usb_fs_task;
+// fs handles...
+static FIL *fhandles[_FS_LOCK];
+static DIR *dhandles[_FS_LOCK];
 
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
@@ -1250,6 +1249,7 @@ namespace GenericFileSystem {
                                                 for(i = 0; i < _VOLUMES; i++) {
                                                         if(Fats[i] != NULL) {
                                                                 f_sync_fs(Fats[i]->ffs);
+                                                                commit_fs(Fats[i]->ffs);
                                                         }
                                                 }
                                                 rc = FR_OK;
@@ -1466,6 +1466,7 @@ namespace GenericFileSystem {
                                                                         sto[nm]->Reads = *UHS_USB_BulkOnly_Read;
                                                                         sto[nm]->Writes = *UHS_USB_BulkOnly_Write;
                                                                         sto[nm]->Status = *UHS_USB_BulkOnly_Status;
+                                                                        sto[nm]->Commit = *UHS_USB_BulkOnly_Commit;
                                                                         sto[nm]->TotalSectors = UHS_USB_BulkOnly[B]->GetCapacity(LUN);
                                                                         sto[nm]->SectorSize = UHS_USB_BulkOnly[B]->GetSectorSize(LUN);
                                                                         PCPartition *PT = new PCPartition;
@@ -1486,6 +1487,7 @@ namespace GenericFileSystem {
                                                                                                         sto[nm]->Writes = *UHS_USB_BulkOnly_Write;
                                                                                                         sto[nm]->Status = *UHS_USB_BulkOnly_Status;
                                                                                                         sto[nm]->Initialize = *UHS_USB_BulkOnly_Initialize;
+                                                                                                        sto[nm]->Commit = *UHS_USB_BulkOnly_Commit;
                                                                                                         sto[nm]->TotalSectors = UHS_USB_BulkOnly[B]->GetCapacity(LUN);
                                                                                                         sto[nm]->SectorSize = UHS_USB_BulkOnly[B]->GetSectorSize(LUN);
                                                                                                         Fats[nm] = new PFAT(sto[nm], nm, apart->firstSector);
