@@ -1,11 +1,11 @@
 #
 # These are set for a mega 1280 + quadram.
 # If your board is a mega 2560 uncomment the following two lines
-#BOARD = mega2560
-#GCS = -Wl,--gc-sections
+BOARD = mega2560
+GCS = -Wl,--gc-sections
 # ...and then comment out the following line
 #BOARD = mega
-BOARD = teensypp2
+#BOARD = teensypp2
 # set your Arduino PROGRAMMING port here
 #PORT = /dev/ttyUSB0
 PORT = /dev/ttyACM0
@@ -22,7 +22,7 @@ EXTRA_FLAGS += -D _VOLUMES=4
 # How many USB drivers
 EXTRA_FLAGS += -D MAX_USB_MS_DRIVERS=1
 # Max size of a sector, 512, 1024 or 2048
-EXTRA_FLAGS += -D _MAX_SS=2048
+EXTRA_FLAGS += -D _MAX_SS=512
 # Set _FS_TINY to 1 to save RAM, but speed will suffer
 EXTRA_FLAGS += -D _FS_TINY=0
 # Use fast seek?

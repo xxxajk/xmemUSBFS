@@ -78,14 +78,72 @@ LCDShield lcd;
 //
 ////////////////////////////////////////////////////////////////////////////////
 
+void show_dir(DIRINFO *de) {
+        int res;
+        uint64_t fre;
+        uint32_t numlo;
+        uint32_t numhi;
+        int fd = opendir("/");
+        if(fd > 0) {
+                printf_P(PSTR("Directory of '/'\r\n"));
+                do {
+                        res = readdir(fd, de);
+
+                        if(!res) {
+                                DateTime tstamp(de->fdate, de->ftime);
+                                if(!(de->fattrib & AM_VOL)) {
+                                        if(de->fattrib & AM_DIR) {
+                                                printf_P(PSTR("d"));
+                                        } else printf_P(PSTR("-"));
+
+                                        if(de->fattrib & AM_RDO) {
+                                                printf_P(PSTR("r-"));
+                                        } else printf_P(PSTR("rw"));
+
+                                        if(de->fattrib & AM_HID) {
+                                                printf_P(PSTR("h"));
+                                        } else printf_P(PSTR("-"));
+
+                                        if(de->fattrib & AM_SYS) {
+                                                printf_P(PSTR("s"));
+                                        } else printf_P(PSTR("-"));
+
+
+                                        if(de->fattrib & AM_ARC) {
+                                                printf_P(PSTR("a"));
+                                        } else printf_P(PSTR("-"));
+
+
+
+                                        printf_P(PSTR(" %12lu"), de->fsize);
+                                        printf_P(PSTR(" %.4u-%.2u-%.2u"), tstamp.year(), tstamp.month(), tstamp.day());
+                                        printf_P(PSTR(" %.2u:%.2u:%.2u"), tstamp.hour(), tstamp.minute(), tstamp.second());
+                                        printf_P(PSTR(" %s"), de->fname);
+                                        if(de->lfname[0] != 0) {
+                                                printf_P(PSTR(" (%s)"), de->lfname);
+                                        }
+                                        printf_P(PSTR("\r\n"));
+                                }
+                        }
+
+                } while(!res);
+                closedir(fd);
+
+                fre = fs_getfree("/");
+                numlo = fre % 1000000000llu;
+                numhi = fre / 1000000000llu;
+                if(numhi) printf("%lu", numhi);
+                printf("%lu bytes available on disk.\r\n", numlo);
+        }
+
+}
+
 void test_main(void) {
         uint32_t start;
         uint32_t end;
         uint64_t fre;
         uint32_t wt;
         uint32_t rt;
-        uint32_t numlo;
-        uint32_t numhi;
         char fancy[4];
         int fd;
         uint8_t fdc;
@@ -110,25 +168,25 @@ void test_main(void) {
         //*ptr = 0x00;
         printf_P(PSTR("Maximum Volume mount count :%i\r\n"), _VOLUMES);
         printf_P(PSTR("\r\nTesting task started. PID=%i"), this_task);
-        for (;;) {
+        for(;;) {
                 fdc = _VOLUMES;
                 uint8_t last = _VOLUMES;
                 printf_P(PSTR("\r\nWaiting for '/' to mount..."));
-                while (fdc == _VOLUMES) {
+                while(fdc == _VOLUMES) {
                         slots = fs_mountcount();
-                        if (slots != last) {
+                        if(slots != last) {
                                 last = slots;
-                                if (slots != 0) {
+                                if(slots != 0) {
                                         printf_P(PSTR(" \r\n"), ptr);
                                         fdc = fs_ready("/");
-                                        for (uint8_t x = 0; x < _VOLUMES; x++) {
+                                        for(uint8_t x = 0; x < _VOLUMES; x++) {
                                                 ptr = (uint8_t *)fs_mount_lbl(x);
-                                                if (ptr != NULL) {
+                                                if(ptr != NULL) {
                                                         printf_P(PSTR("'%s' is mounted\r\n"), ptr);
                                                         free(ptr);
                                                 }
                                         }
-                                        if (fdc == _VOLUMES) printf_P(PSTR("\r\nWaiting for '/' to mount..."));
+                                        if(fdc == _VOLUMES) printf_P(PSTR("\r\nWaiting for '/' to mount..."));
                                 }
                         }
                         printf_P(PSTR(" \b%c\b"), fancy[spin]);
@@ -137,63 +195,70 @@ void test_main(void) {
                 }
                 printf_P(PSTR(" \b"));
                 fre = fs_getfree("/");
-                if (fre > 2097152) {
+                if(fre > 2097152) {
+                        //show_dir(de);
                         printf_P(PSTR("Removing '/HeLlO.tXt' file... "));
                         res = unlink("/hello.txt");
                         printf_P(PSTR("completed with %i\r\n"), res);
+                        //show_dir(de);
                         printf_P(PSTR("\r\nStarting Write test...\r\n"));
                         fd = open("/HeLlO.tXt", O_WRONLY | O_CREAT);
-                        if (fd>0) {
-                                printf_P(PSTR("File opened OK %i\r\n"), fd);
-                                char tst[]="                                        \b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b";
-                                for (int i = 0; i < 26; i++) {
-                                        write(fd, tst, strlen(tst));
-                                }
-                                char hi[]="]-[ello \\/\\/orld!\r\n";
+                        if(fd > 0) {
+                                printf_P(PSTR("File opened OK, fd = %i\r\n"), fd);
+                                //char tst[] = "                                        \b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b";
+                                //for(int i = 0; i < 26; i++) {
+                                //        write(fd, tst, strlen(tst));
+                                //}
+                                char hi[] = "]-[ello \\/\\/orld!\r\n";
                                 res = write(fd, hi, strlen(hi));
-                                printf_P(PSTR("Write result = %i, "), res);
+                                printf_P(PSTR("Wrote %i bytes, "), res);
                                 res = close(fd);
                                 printf_P(PSTR("File closed result = %i.\r\n"), res);
                         } else {
                                 printf_P(PSTR("xError %d (%u)\r\n"), fd, fs_err[this_task]);
                         }
+                        //show_dir(de);
                         delay(1000);
                         printf_P(PSTR("\r\nStarting Read test...\r\n"));
                         fd = open("/hElLo.TxT", O_RDONLY);
-                        if (fd>0) {
+                        if(fd > 0) {
                                 res = 1;
-                                printf_P(PSTR("File opened OK, displaying contents...\r\n"));
+                                printf_P(PSTR("File opened OK, fd = %i, displaying contents...\r\n"), fd);
 
-                                while (res > 0) {
+                                while(res > 0) {
                                         res = read(fd, data, 128);
-                                        for (int i = 0; i < res; i++) {
-                                                if (data[i] == '\n') Serial.write('\r');
-                                                if (data[i] != '\r') Serial.write(data[i]);
+                                        for(int i = 0; i < res; i++) {
+                                                if(data[i] == '\n') Serial.write('\r');
+                                                if(data[i] != '\r') Serial.write(data[i]);
                                         }
                                 }
                                 printf_P(PSTR("\r\nRead completed, last read result = %i (%i), "), res, fs_err[this_task]);
                                 res = close(fd);
-                                printf_P(PSTR("file close result = %i.\r\nTesting rename\r\n"), res);
+                                printf_P(PSTR("file close result = %i.\r\n"), res);
+                                //show_dir(de);
+                                printf_P(PSTR("Testing rename\r\n"));
                                 unlink("/newtest.txt");
                                 res = rename("/HeLlO.tXt", "/newtest.txt");
                                 printf_P(PSTR("file rename result = %i.\r\n"), res);
                         } else {
                                 printf_P(PSTR("File not found.\r\n"));
                         }
+                        //show_dir(de);
                         printf_P(PSTR("\r\nRemoving '/1MB.bin' file... "));
                         res = unlink("/1MB.bin");
                         printf_P(PSTR("completed with %i\r\n"), res);
+                        //show_dir(de);
                         printf_P(PSTR("1MB write timing test "));
 
                         //for (int i = 0; i < 128; i++) data[i] = i & 0xff;
                         fd = open("/1MB.bin", O_WRONLY | O_CREAT);
-                        if (fd>0) {
+                        if(fd > 0) {
                                 int i = 0;
                                 xmem::Sleep(500);
                                 start = millis();
-                                for (; i < 8192; i++) {
+                                for(; i < 8192; i++) {
                                         res = write(fd, data, 128);
-                                        if (fs_err[this_task]) break;
+                                        if(fs_err[this_task]) break;
                                 }
                                 printf_P(PSTR(" %i writes, (%i), "), i, fs_err[this_task]);
                                 res = close(fd);
@@ -204,15 +269,16 @@ void test_main(void) {
                         }
                         printf_P(PSTR("completed with %i\r\n"), fs_err[this_task]);
 
+                        //show_dir(de);
                         printf_P(PSTR("1MB read timing test "));
 
                         fd = open("/1MB.bin", O_RDONLY);
-                        if (fd>0) {
+                        if(fd > 0) {
                                 xmem::Sleep(500);
                                 start = millis();
                                 res = 1;
                                 int i = 0;
-                                while (res > 0) {
+                                while(res > 0) {
                                         res = read(fd, data, 128);
                                         i++;
                                 }
@@ -227,61 +293,12 @@ void test_main(void) {
                         printf_P(PSTR("Not enough free space or write protected."));
                 }
 
-                fd = opendir("/");
-                if (fd>0) {
-                        printf_P(PSTR("Directory of '/'\r\n"));
-                        do {
-                                res = readdir(fd, de);
+                show_dir(de);
 
-                                if (!res) {
-                                        DateTime tstamp(de->fdate, de->ftime);
-                                        if (!(de->fattrib & AM_VOL)) {
-                                                if (de->fattrib & AM_DIR) {
-                                                        printf_P(PSTR("d"));
-                                                } else printf_P(PSTR("-"));
-
-                                                if (de->fattrib & AM_RDO) {
-                                                        printf_P(PSTR("r-"));
-                                                } else printf_P(PSTR("rw"));
-
-                                                if (de->fattrib & AM_HID) {
-                                                        printf_P(PSTR("h"));
-                                                } else printf_P(PSTR("-"));
-
-                                                if (de->fattrib & AM_SYS) {
-                                                        printf_P(PSTR("s"));
-                                                } else printf_P(PSTR("-"));
-
-
-                                                if (de->fattrib & AM_ARC) {
-                                                        printf_P(PSTR("a"));
-                                                } else printf_P(PSTR("-"));
-
-
-
-                                                printf_P(PSTR(" %12lu"), de->fsize);
-                                                printf_P(PSTR(" %.4u-%.2u-%.2u"), tstamp.year(), tstamp.month(), tstamp.day());
-                                                printf_P(PSTR(" %.2u:%.2u:%.2u"), tstamp.hour(), tstamp.minute(), tstamp.second());
-                                                printf_P(PSTR(" %s"), de->fname);
-                                                if (de->lfname[0] != 0) {
-                                                        printf_P(PSTR(" (%s)"), de->lfname);
-                                                }
-                                                printf_P(PSTR("\r\n"));
-                                        }
-                                }
-
-                        } while (!res);
-                        closedir(fd);
-
-                        fre = fs_getfree("/");
-                        numlo = fre % 1000000000llu;
-                        numhi = fre / 1000000000llu;
-                        if (numhi) printf("%lu", numhi);
-                        printf("%lu bytes available on disk.\r\n", numlo);
-                }
-
+                printf_P(PSTR("\r\nFlushing caches..."));
+                fs_sync(); // IMPORTANT! Sync all caches to all medias!
                 printf_P(PSTR("\r\nRemove and insert media..."));
-                while (fs_ready("/") != _VOLUMES) {
+                while(fs_ready("/") != _VOLUMES) {
                         printf_P(PSTR(" \b%c\b"), fancy[spin]);
                         spin = (1 + spin) % 4;
                         xmem::Sleep(100);
@@ -306,7 +323,7 @@ void test_main(void) {
  */
 void displayDigitalTime() {
         char timeChar[12];
-        if (!ampm) {
+        if(!ampm) {
                 sprintf_P(timeChar, PSTR("%.2d:%.2d:%.2d AM"), hours, minutes, seconds);
         } else {
                 sprintf_P(timeChar, PSTR("%.2d:%.2d:%.2d PM"), hours, minutes, seconds);
@@ -355,12 +372,12 @@ void displayAnalogTime() {
         lcd.setLine(CLOCK_CENTER, 66, CLOCK_CENTER + osx, 66 + osy, BACKGROUND); // Erase second hand
         osx = sx;
         osy = sy;
-        if (((ohx ^ hx) | (ohy ^ hy))) {
+        if(((ohx ^ hx) | (ohy ^ hy))) {
                 lcd.setLine(CLOCK_CENTER, 66, CLOCK_CENTER + ohx, 66 + ohy, BACKGROUND); // Erase hour hand
                 ohx = hx;
                 ohy = hy;
         }
-        if (((omx ^ mx) | (omy ^ my))) {
+        if(((omx ^ mx) | (omy ^ my))) {
                 lcd.setLine(CLOCK_CENTER, 66, CLOCK_CENTER + omx, 66 + omy, BACKGROUND); // Erase minute hand
                 omx = mx;
                 omy = my;
@@ -392,25 +409,25 @@ void setTime() {
 
         /* Draw the clock, so we can see the new time */
         updateClock();
-        while (!digitalRead(buttonPins[2])) xmem::Yield();
+        while(!digitalRead(buttonPins[2])) xmem::Yield();
 
         /* We'll run around this loop until S3 is pressed again */
-        while (digitalRead(buttonPins[2])) {
+        while(digitalRead(buttonPins[2])) {
                 /* If S1 is pressed, we'll update the hours */
-                if (!digitalRead(buttonPins[0])) {
+                if(!digitalRead(buttonPins[0])) {
                         hours++; // Increase hours by 1
-                        if (hours == 12)
+                        if(hours == 12)
                                 ampm ^= 1; // Flip am/pm if it's 12 o'clock
-                        if (hours >= 13)
+                        if(hours >= 13)
                                 hours = 1; // Set hours to 1 if it's 13. 12-hour clock.
 
                         /* and update the clock, so we can see it */
                         updateClock();
                         delay(250);
                 }
-                if (!digitalRead(buttonPins[1])) {
+                if(!digitalRead(buttonPins[1])) {
                         minutes++; // Increase minutes by 1
-                        if (minutes >= 60)
+                        if(minutes >= 60)
                                 minutes = 0; // If minutes is 60, set it back to 0
 
                         /* and update the clock, so we can see it */
@@ -419,21 +436,21 @@ void setTime() {
                 }
         }
         /* Once S3 is pressed, we'll exit, but not until it's released */
-        while (!digitalRead(buttonPins[2])) xmem::Yield();
+        while(!digitalRead(buttonPins[2])) xmem::Yield();
 
         DateTime o = RTCnow();
-        if (!ampm && hours == 12) hours = 0;
-        if (ampm) hours += 12;
+        if(!ampm && hours == 12) hours = 0;
+        if(ampm) hours += 12;
         DateTime q = DateTime(o.year(), o.month(), o.day(), hours, minutes, seconds);
         RTCset(q);
         DateTime t = RTCnow();
         hours = t.hour();
         minutes = t.minute();
         seconds = t.second();
-        if (hours > 11) ampm = 1;
+        if(hours > 11) ampm = 1;
         else ampm = 0;
-        if (hours > 11) hours -= 12;
-        if (hours == 0) hours = 12;
+        if(hours > 11) hours -= 12;
+        if(hours == 0) hours = 12;
         updateClock();
 }
 
@@ -443,7 +460,7 @@ void LCD_clock(void) {
         buttonPins[1] = A1;
         buttonPins[2] = A2;
         /* Set up the button pins as inputs, set pull-up resistor */
-        for (int i = 0; i < 3; i++) {
+        for(int i = 0; i < 3; i++) {
                 pinMode(buttonPins[i], INPUT);
                 digitalWrite(buttonPins[i], HIGH);
         }
@@ -458,20 +475,20 @@ void LCD_clock(void) {
         hours = t.hour();
         minutes = t.minute();
         seconds = t.second();
-        if (hours > 11) ampm = 1;
+        if(hours > 11) ampm = 1;
         else ampm = 0;
-        if (hours > 11) hours -= 12;
-        if (hours == 0) hours = 12;
+        if(hours > 11) hours -= 12;
+        if(hours == 0) hours = 12;
         updateClock();
         lastmil = 0L;
 
         // loop() ;-)
-        for (;;) {
+        for(;;) {
                 xmem::Yield();
                 uint32_t mils = millis();
                 uint32_t delta = mils - lastmil;
-                if (delta < 1000) {
-                        if (!digitalRead(buttonPins[2])) {
+                if(delta < 1000) {
+                        if(!digitalRead(buttonPins[2])) {
                                 setTime(); // If S3 was pressed, go set the time
                                 lastmil = millis();
                         }
@@ -481,10 +498,10 @@ void LCD_clock(void) {
                         hours = v.hour();
                         minutes = v.minute();
                         seconds = v.second();
-                        if (hours > 11) ampm = 1;
+                        if(hours > 11) ampm = 1;
                         else ampm = 0;
-                        if (hours > 11) hours -= 12;
-                        if (hours == 0) hours = 12;
+                        if(hours > 11) hours -= 12;
+                        if(hours == 0) hours = 12;
                         updateClock();
                 }
 
@@ -559,7 +576,7 @@ void loop() {
         xmem::Yield();
         brightness += brightness_modification_value;
         xmem::Yield();
-        if (brightness == 0 || brightness == 255) brightness_modification_value = -brightness_modification_value;
+        if(brightness == 0 || brightness == 255) brightness_modification_value = -brightness_modification_value;
         xmem::Yield();
 }
 
