@@ -15,9 +15,12 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+#ifdef __AVR__
 // per-task fs error code
 extern uint8_t fs_err[USE_MULTIPLE_APP_API];
-
+#else
+extern uint8_t fs_err;
+#endif
 typedef struct {
                 DWORD fsize; /* File size */
                 WORD fdate; /* Last modified date */

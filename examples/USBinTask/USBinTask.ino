@@ -1,5 +1,9 @@
 /*
  * Mega + expansion RAM + funky status LED,
+ * OR
+ * PJRC teensy++ 2.0 + expansion RAM
+ * OR
+ * PJRC teensy 3.0/3.1
  *
  * IMPORTANT! PLEASE USE Arduino 1.0.5 or better!
  * Older versions HAVE MAJOR BUGS AND WILL NOT WORK AT ALL!
@@ -27,9 +31,14 @@
 #include <Wire.h>
 #include <SPI.h>
 //
-
+#if defined(CORE_TEENSY) && defined(__arm__)
+#include <spi4teensy3.h>
+#define TESTdsize 512
+#else
+#define TESTdsize 128
 #ifndef USE_MULTIPLE_APP_API
 #define USE_MULTIPLE_APP_API 16
+#endif
 #endif
 // Set this to 0 if you don't own the lcd panel or have not modified it to use SPI.
 // Since LCD does not safely support teensy, define as 0
@@ -47,6 +56,9 @@
 #if _USE_FS
 #include <xmemUSBFS.h>
 #include <Storage.h>
+// must be divisible into 1048576 evenly.
+#define TESTcycles (1048576/TESTdsize)
+
 #endif
 
 #if _USE_LCD
@@ -87,8 +99,11 @@ void show_dir(DIRINFO *de) {
         if(fd > 0) {
                 printf_P(PSTR("Directory of '/'\r\n"));
                 do {
-                        res = readdir(fd, de);
+                        //printf("READDIR\r\n");
+                        //fflush(stdout);
+                        //delay(1);
 
+                        res = readdir(fd, de);
                         if(!res) {
                                 DateTime tstamp(de->fdate, de->ftime);
                                 if(!(de->fattrib & AM_VOL)) {
@@ -127,6 +142,10 @@ void show_dir(DIRINFO *de) {
                         }
 
                 } while(!res);
+                //printf("CLOSEDIR\r\n");
+                //fflush(stdout);
+                //delay(1000);
+
                 closedir(fd);
 
                 fre = fs_getfree("/");
@@ -148,11 +167,13 @@ void test_main(void) {
         int fd;
         uint8_t fdc;
         uint8_t *ptr;
-        uint8_t slots = 0;
+        uint8_t slots;
         uint8_t spin = 0;
+#ifdef __AVR__
         uint8_t this_task = xmem::getcurrentBank();
+#endif
         DIRINFO *de = (DIRINFO *)malloc(sizeof (DIRINFO));
-        uint8_t *data = (uint8_t *)malloc(128);
+        uint8_t *data = (uint8_t *)malloc(TESTdsize);
         int res;
 
         fancy[0] = '-';
@@ -167,11 +188,17 @@ void test_main(void) {
         //ptr++;
         //*ptr = 0x00;
         printf_P(PSTR("Maximum Volume mount count :%i\r\n"), _VOLUMES);
+#ifdef __AVR__
         printf_P(PSTR("\r\nTesting task started. PID=%i"), this_task);
+#else
+        printf_P(PSTR("\r\nTesting task started."));
+#endif
         for(;;) {
                 fdc = _VOLUMES;
                 uint8_t last = _VOLUMES;
+                slots = _VOLUMES;
                 printf_P(PSTR("\r\nWaiting for '/' to mount..."));
+
                 while(fdc == _VOLUMES) {
                         slots = fs_mountcount();
                         if(slots != last) {
@@ -191,13 +218,22 @@ void test_main(void) {
                         }
                         printf_P(PSTR(" \b%c\b"), fancy[spin]);
                         spin = (1 + spin) % 4;
+#ifdef __AVR__
                         xmem::Sleep(100);
+#else
+                        fflush(stdout);
+                        delay(100);
+#endif
+
                 }
                 printf_P(PSTR(" \b"));
                 fre = fs_getfree("/");
                 if(fre > 2097152) {
                         //show_dir(de);
                         printf_P(PSTR("Removing '/HeLlO.tXt' file... "));
+#ifndef __AVR__
+                        fflush(stdout);
+#endif
                         res = unlink("/hello.txt");
                         printf_P(PSTR("completed with %i\r\n"), res);
                         //show_dir(de);
@@ -205,20 +241,22 @@ void test_main(void) {
                         fd = open("/HeLlO.tXt", O_WRONLY | O_CREAT);
                         if(fd > 0) {
                                 printf_P(PSTR("File opened OK, fd = %i\r\n"), fd);
-                                //char tst[] = "                                        \b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b";
-                                //for(int i = 0; i < 26; i++) {
-                                //        write(fd, tst, strlen(tst));
-                                //}
                                 char hi[] = "]-[ello \\/\\/orld!\r\n";
                                 res = write(fd, hi, strlen(hi));
                                 printf_P(PSTR("Wrote %i bytes, "), res);
+#ifndef __AVR__
+                                fflush(stdout);
+#endif
                                 res = close(fd);
                                 printf_P(PSTR("File closed result = %i.\r\n"), res);
                         } else {
-                                printf_P(PSTR("xError %d (%u)\r\n"), fd, fs_err[this_task]);
+                                printf_P(PSTR("xError %d (%u)\r\n"), fd, fs_err
+#ifdef __AVR__
+                                        [this_task]
+#endif
+                                        );
                         }
-                        //show_dir(de);
-                        delay(1000);
+
                         printf_P(PSTR("\r\nStarting Read test...\r\n"));
                         fd = open("/hElLo.TxT", O_RDONLY);
                         if(fd > 0) {
@@ -226,16 +264,22 @@ void test_main(void) {
                                 printf_P(PSTR("File opened OK, fd = %i, displaying contents...\r\n"), fd);
 
                                 while(res > 0) {
-                                        res = read(fd, data, 128);
+                                        res = read(fd, data, TESTdsize);
                                         for(int i = 0; i < res; i++) {
-                                                if(data[i] == '\n') Serial.write('\r');
-                                                if(data[i] != '\r') Serial.write(data[i]);
+                                                if(data[i] == '\n') fputc('\r', stdout);
+                                                if(data[i] != '\r') fputc(data[i], stdout);
                                         }
                                 }
-                                printf_P(PSTR("\r\nRead completed, last read result = %i (%i), "), res, fs_err[this_task]);
+                                printf_P(PSTR("\r\nRead completed, last read result = %i (%i), "), res, fs_err
+#ifdef __AVR__
+                                        [this_task]
+#endif
+                                        );
+#ifndef __AVR__
+                                fflush(stdout);
+#endif
                                 res = close(fd);
                                 printf_P(PSTR("file close result = %i.\r\n"), res);
-                                //show_dir(de);
                                 printf_P(PSTR("Testing rename\r\n"));
                                 unlink("/newtest.txt");
                                 res = rename("/HeLlO.tXt", "/newtest.txt");
@@ -243,65 +287,122 @@ void test_main(void) {
                         } else {
                                 printf_P(PSTR("File not found.\r\n"));
                         }
-                        //show_dir(de);
                         printf_P(PSTR("\r\nRemoving '/1MB.bin' file... "));
+#ifndef __AVR__
+                        fflush(stdout);
+#endif
                         res = unlink("/1MB.bin");
                         printf_P(PSTR("completed with %i\r\n"), res);
                         //show_dir(de);
                         printf_P(PSTR("1MB write timing test "));
+#ifndef __AVR__
+                        fflush(stdout);
+#endif
 
                         //for (int i = 0; i < 128; i++) data[i] = i & 0xff;
                         fd = open("/1MB.bin", O_WRONLY | O_CREAT);
                         if(fd > 0) {
                                 int i = 0;
-                                xmem::Sleep(500);
+#ifdef __AVR__
+                                xmem::Sleep
+#else
+                                delay
+#endif
+                                        (500);
                                 start = millis();
-                                for(; i < 8192; i++) {
-                                        res = write(fd, data, 128);
-                                        if(fs_err[this_task]) break;
+                                for(; i < TESTcycles; i++) {
+                                        res = write(fd, data, TESTdsize);
+                                        if(fs_err
+#ifdef __AVR__
+                                                [this_task]
+#endif
+                                                ) break;
                                 }
-                                printf_P(PSTR(" %i writes, (%i), "), i, fs_err[this_task]);
+                                printf_P(PSTR(" %i writes, (%i), "), i, fs_err
+#ifdef __AVR__
+                                        [this_task]
+#endif
+                                        );
+#ifndef __AVR__
+                                fflush(stdout);
+#endif
                                 res = close(fd);
                                 end = millis();
                                 wt = end - start;
-                                printf_P(PSTR("(%i), "), fs_err[this_task]);
+                                printf_P(PSTR("(%i), "), fs_err
+#ifdef __AVR__
+                                        [this_task]
+#endif
+                                        );
                                 printf_P(PSTR(" %lu ms (%lu sec)\r\n"), wt, (500 + wt) / 1000UL);
                         }
-                        printf_P(PSTR("completed with %i\r\n"), fs_err[this_task]);
+                        printf_P(PSTR("completed with %i\r\n"), fs_err
+#ifdef __AVR__
+                                [this_task]
+#endif
+                                );
 
                         //show_dir(de);
                         printf_P(PSTR("1MB read timing test "));
+#ifndef __AVR__
+                        fflush(stdout);
+#endif
 
                         fd = open("/1MB.bin", O_RDONLY);
                         if(fd > 0) {
-                                xmem::Sleep(500);
+#ifdef __AVR__
+                                xmem::Sleep
+#else
+                                delay
+#endif
+                                        (500);
                                 start = millis();
                                 res = 1;
                                 int i = 0;
                                 while(res > 0) {
-                                        res = read(fd, data, 128);
+                                        res = read(fd, data, TESTdsize);
                                         i++;
                                 }
-                                printf_P(PSTR("%i reads, (%i), "), i, fs_err[this_task]);
                                 end = millis();
+                                i--;
+                                printf_P(PSTR("%i reads, (%i), "), i, fs_err
+#ifdef __AVR__
+                                        [this_task]
+#endif
+                                        );
+#ifndef __AVR__
+                                fflush(stdout);
+#endif
                                 res = close(fd);
                                 rt = end - start;
                                 printf_P(PSTR(" %lu ms (%lu sec)\r\n"), rt, (500 + rt) / 1000UL);
                         }
-                        printf_P(PSTR("completed with %i\r\n"), fs_err[this_task]);
+                        printf_P(PSTR("completed with %i\r\n"), fs_err
+#ifdef __AVR__
+                                [this_task]
+#endif
+                                );
                 } else {
-                        printf_P(PSTR("Not enough free space or write protected."));
+                        printf_P(PSTR("Not enough free space or write protected.\r\n"));
                 }
 
                 show_dir(de);
 
                 printf_P(PSTR("\r\nFlushing caches..."));
+#ifndef __AVR__
+                fflush(stdout);
+#endif
                 fs_sync(); // IMPORTANT! Sync all caches to all medias!
                 printf_P(PSTR("\r\nRemove and insert media..."));
                 while(fs_ready("/") != _VOLUMES) {
                         printf_P(PSTR(" \b%c\b"), fancy[spin]);
                         spin = (1 + spin) % 4;
+#ifdef __AVR__
                         xmem::Sleep(100);
+#else
+                        fflush(stdout);
+                        delay(100);
+#endif
                 }
                 printf_P(PSTR(" \r\n\r\n"));
         }
@@ -555,6 +656,7 @@ void setup() {
         // The value t1 is thrown out. You can save it to a global if you need to.
         // This demo does not need to.
         //
+#ifdef __AVR__
 #if _USE_FS
         uint8_t t1 = xmem::SetupTask(test_main);
         xmem::StartTask(t1);
@@ -563,14 +665,17 @@ void setup() {
         uint8_t t2 = xmem::SetupTask(LCD_clock);
         xmem::StartTask(t2);
 #endif
+#endif
 }
 
 // This is the main task (task 0). Not using it to do anything except service serial.
 // YOU SHOULD ALWAYS Yield() in loop() at least once for maximal performance if it is not used!
 // For trivial stuff (LED blinker) sprinkled Yield() works fantastic, giving other tasks more MCU time.
 // Note that the LED speed can actually indicate load on the uC... slower == higher load.
+int poop = 0;
 
 void loop() {
+#ifdef __AVR__
         xmem::Yield();
         analogWrite(LED_BUILTIN, brightness);
         xmem::Yield();
@@ -578,5 +683,9 @@ void loop() {
         xmem::Yield();
         if(brightness == 0 || brightness == 255) brightness_modification_value = -brightness_modification_value;
         xmem::Yield();
+#else
+        USB_main();
+        test_main();
+#endif
 }
 

@@ -1,3 +1,4 @@
+
 #include <xmem.h>
 #include <RTClib.h>
 #include <masstorage.h>
@@ -11,14 +12,18 @@
 #include <FAT/FAT.h>
 
 #include <xmemUSBFS.h>
+#include <xmemUSB.h>
 
+#ifdef __AVR__
 // flush, eof, truncate, tell, close
+
 typedef struct {
         uint8_t op;
         uint8_t fd;
 } __attribute__((packed)) fss_opfd;
 
 // read, write
+
 typedef struct {
         uint8_t op;
         uint8_t fd;
@@ -27,6 +32,7 @@ typedef struct {
 } __attribute__((packed)) fss_opfd16;
 
 // lseek
+
 typedef struct {
         uint8_t op;
         uint8_t fd;
@@ -35,6 +41,7 @@ typedef struct {
 } __attribute__((packed)) fss_opfd32dat;
 
 // chmod, mkdir
+
 typedef struct {
         uint8_t op;
         uint8_t mode;
@@ -65,13 +72,13 @@ typedef struct {
         uint8_t drive;
         uint8_t colon;
         uint8_t path;
-} __attribute__((packed))  fss_op88drcol;
+} __attribute__((packed)) fss_op88drcol;
 
 /* common reply type */
 typedef struct {
         FRESULT res;
         uint8_t dat;
-} __attribute__((packed))  fss_r8;
+} __attribute__((packed)) fss_r8;
 
 //    * f_sync - Flush cached data
 #define PIPE_FLUSH      0x00
@@ -135,801 +142,31 @@ typedef struct {
 
 //    * Path/volume label
 #define PIPE_MOUNT_CNT  0x14
-
+#endif
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
+#ifdef __AVR__
 // fs errno...
 uint8_t fs_err[USE_MULTIPLE_APP_API];
 // NOTE: memory stream transaction pipes must be on the AVR RAM, therefore, global
 // They are also static so that they are not reachable from other modules
 static memory_stream to_usb_fs_task;
 static memory_stream from_usb_fs_task;
+#else
+// fs errno...
+uint8_t fs_err;
+#endif
 // fs handles...
 static FIL *fhandles[_FS_LOCK];
 static DIR *dhandles[_FS_LOCK];
-
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-
-// Utilities
-extern "C" {
-/**
- * Return a pointer to path name with mount point stripped, unless
- * the mount point is '/'
- *
- * @param path
- * @return pointer to path name
- */
-const char *_fs_util_trunkpath(const char *path, uint8_t vol) {
-
-        const char *pathtrunc = path;
-        char *s = fs_mount_lbl(vol);
-        if(s != NULL) {
-                pathtrunc += strlen(s);
-                free(s);
-        }
-        return pathtrunc;
-}
-
-/**
- * Convert a path to a volume number.
- *
- * @param path
- * @return volume number, or _VOLUMES on error
- *
- */
-uint8_t _fs_util_vol(const char *path) {
-        uint8_t *ptr;
-        char *fname;
-        uint8_t vol = _VOLUMES;
-
-        if((strlen(path) < 1) || *path != '/' || strstr(path, "/./") || strstr(path, "/../") || strstr(path, "//")) {
-                fs_err[xmem::getcurrentBank()] = FR_INVALID_NAME;
-        } else {
-                fname = (char *)xmem::safe_malloc(strlen(path) + 1);
-                *fname = 0x00;
-                strcat(fname, path);
-                ptr = (uint8_t *)fname;
-                ptr++; // skip first '/'
-                while(*ptr) {
-                        if(*ptr == '/') {
-                                break;
-                        }
-                        ptr++;
-                }
-                if(*ptr) {
-                        *ptr = 0x00;
-                        vol = fs_ready((char *)fname);
-                }
-                // Could be a sub-dir in the path, so try just the root.
-                if(vol == _VOLUMES) {
-                        // root of "/"
-                        vol = fs_ready("/");
-                }
-                free(fname);
-        }
-        return vol;
-}
-
-// functions
-
-/**
- * Check if mount point is ready
- *
- * @param path mount point path
- * @return volume number, or _VOLUMES on error
- */
-uint8_t fs_ready(const char *path) {
-        // path -> volume number
-        fss_r8 *reply;
-        uint8_t vol;
-        uint8_t rc;
-        uint16_t ltr = strlen(path) + 2;
-        fss_opfd *message = (fss_opfd *)xmem::safe_malloc(ltr);
-        message->op = PIPE_VOLUME;
-        message->fd = 0x00;
-        strcat((char *)&message->fd, path);
-        xmem::memory_send((uint8_t*)message, ltr, &to_usb_fs_task);
-        free(message);
-        xmem::memory_recv((uint8_t**) & reply, &from_usb_fs_task);
-        rc = reply->res; // error code
-        fs_err[xmem::getcurrentBank()] = rc; // save it here in the event we want to use it.
-        vol = reply->dat;
-        free(reply);
-        if(rc) {
-                return _VOLUMES; // error
-        }
-        return vol;
-
-}
-
-uint8_t fs_opendir(const char *path) {
-        uint8_t *ptr;
-        fss_r8 *reply;
-        uint8_t fd;
-        uint8_t rc;
-        char *message;
-        const char *pathtrunc;
-
-        uint8_t vol = _fs_util_vol(path);
-
-        if(vol == _VOLUMES) {
-                fs_err[xmem::getcurrentBank()] = FR_NO_PATH;
-                return 0;
-        }
-
-
-        pathtrunc = _fs_util_trunkpath(path, vol);
-        uint16_t ltr = strlen(pathtrunc) + 5;
-        message = (char *)xmem::safe_malloc(ltr);
-        ptr = (uint8_t *)message;
-        *ptr = PIPE_OPEN; // open
-        ptr++;
-        *ptr = 'd'; // Directory
-        ptr++;
-        // volume number
-        *ptr = '0' + vol;
-        ptr++;
-        *ptr = ':';
-        ptr++;
-        *ptr = 0x00;
-        strcat((char *)ptr, (char *)pathtrunc);
-        xmem::memory_send((uint8_t*)message, ltr, &to_usb_fs_task);
-        free(message);
-        xmem::memory_recv((uint8_t**) & reply, &from_usb_fs_task);
-        rc = reply->res; // error code
-        fs_err[xmem::getcurrentBank()] = rc; // save it here in the event we want to use it.
-        fd = reply->dat;
-        free(reply);
-        if(rc) {
-                return 0; // error
-        }
-        return fd;
-}
-
-/**
- * Open a file. An absolute, fully resolved canonical path is required!
- * Relative paths and links are _not_ supported.
- *
- * @param path
- * @param mode one of rRwWxX
- * @return returns file handle number, or 0 on error
- */
-uint8_t fs_open(const char *path, const char *mode) {
-        fss_r8 *reply;
-        uint8_t fd;
-        uint8_t rc;
-        const char *pathtrunc;
-
-        uint8_t vol = _fs_util_vol(path);
-
-        if(vol == _VOLUMES) {
-                fs_err[xmem::getcurrentBank()] = FR_NO_PATH;
-                return 0;
-        }
-
-        pathtrunc = _fs_util_trunkpath(path, vol);
-
-        uint16_t lpt = strlen(pathtrunc) + sizeof (fss_op88drcol);
-        fss_op88drcol *message = (fss_op88drcol *)xmem::safe_malloc(lpt);
-        message->op = PIPE_OPEN;
-        message->object = 'f';
-        message->mode = *mode;
-        message->drive = '0' + vol;
-        message->colon = ':';
-        message->path = 0x00;
-
-        strcat((char *)&message->path, (char *)pathtrunc);
-
-        xmem::memory_send((uint8_t*)message, lpt, &to_usb_fs_task);
-        free(message);
-        xmem::memory_recv((uint8_t**) & reply, &from_usb_fs_task);
-        rc = reply->res; // error code
-        fs_err[xmem::getcurrentBank()] = rc; // save it here in the event we want to use it.
-        fd = reply->dat;
-        free(reply);
-        if(rc) {
-                //printf("Error %i ", rc);
-                return 0; // error
-        }
-        return fd;
-}
-
-/**
- * Close file
- * @param fd file handle to close
- *
- * @return FRESULT, 0 = success
- */
-int fs_close(uint8_t fd) {
-        fss_r8 *reply;
-        fss_opfd message = {
-                PIPE_CLOSE,
-                fd
-        };
-        uint8_t rc;
-        xmem::memory_send((uint8_t *) & message, sizeof (fss_opfd), &to_usb_fs_task);
-        xmem::memory_recv((uint8_t**) & reply, &from_usb_fs_task);
-        rc = reply->res; // error code
-        fs_err[xmem::getcurrentBank()] = rc; // save it here in the event we want to use it.
-        free(reply);
-        return rc;
-}
-
-/**
- * Close directory
- *
- * @param dh directory handle to close
- * @return FRESULT, 0 = success
- */
-int fs_closedir(uint8_t dh) {
-        return (fs_close(dh));
-}
-
-int fs_readdir(uint8_t fd, DIRINFO *data) {
-        fss_r8 *reply;
-        uint8_t rc;
-
-        fss_opfd message = {
-                PIPE_READ,
-                fd
-        };
-        xmem::memory_send((uint8_t *) & message, sizeof (fss_opfd), &to_usb_fs_task);
-        xmem::memory_recv((uint8_t**) & reply, &from_usb_fs_task);
-        rc = reply->res; // error code
-        fs_err[xmem::getcurrentBank()] = rc; // save it here in the event we want to use it.
-        if(rc == FR_OK) {
-                memcpy(data, &reply->dat, sizeof (DIRINFO));
-        }
-        free(reply);
-        return rc;
-}
-
-/**
- * Flush all files that have pending write data to disk.
- *
- * @return FRESULT, 0 = success
- */
-uint8_t fs_sync(void) {
-        fss_r8 *reply;
-        uint8_t message;
-        uint8_t rc;
-        message = PIPE_SYNC;
-        xmem::memory_send(&message, 1U, &to_usb_fs_task);
-        xmem::memory_recv((uint8_t**) & reply, &from_usb_fs_task);
-        rc = reply->res; // error code
-        fs_err[xmem::getcurrentBank()] = rc; // save it here in the event we want to use it.
-        free(reply);
-        return rc;
-}
-
-/**
- * Flush pending writes to disk for a specific file.
- *
- * @param fd file handle
- * @return FRESULT, 0 = success
- */
-uint8_t fs_flush(uint8_t fd) {
-        fss_opfd message = {
-                PIPE_FLUSH,
-                fd
-        };
-        fss_r8 *reply;
-
-        uint8_t rc;
-        xmem::memory_send((uint8_t *) & message, sizeof (fss_opfd), &to_usb_fs_task);
-        xmem::memory_recv((uint8_t**) & reply, &from_usb_fs_task);
-        rc = reply->res; // error code
-        fs_err[xmem::getcurrentBank()] = rc; // save it here in the event we want to use it.
-        free(reply);
-        return rc;
-}
-
-/**
- * Check to see if we are at the end of the file.
- *
- * @param fd file handle
- * @return 0 = not eof, 1 = eof
- */
-uint8_t fs_eof(uint8_t fd) {
-        fss_r8 *reply;
-        fss_opfd message = {
-                PIPE_EOF,
-                fd
-        };
-        uint8_t rc;
-        xmem::memory_send((uint8_t *) & message, sizeof (fss_opfd), &to_usb_fs_task);
-        xmem::memory_recv((uint8_t**) & reply, &from_usb_fs_task);
-        rc = reply->res; // error code
-        fs_err[xmem::getcurrentBank()] = rc; // save it here in the event we want to use it.
-        free(reply);
-        return rc;
-}
-
-/**
- * Truncate file to current position.
- *
- * @param fd file handle
- * @return FRESULT, 0 = success
- */
-uint8_t fs_truncate(uint8_t fd) {
-        fss_r8 *reply;
-        fss_opfd message = {
-                PIPE_TRUNC,
-                fd
-        };
-        uint8_t rc;
-        xmem::memory_send((uint8_t *) & message, sizeof (fss_opfd), &to_usb_fs_task);
-        xmem::memory_recv((uint8_t**) & reply, &from_usb_fs_task);
-        rc = reply->res; // error code
-        fs_err[xmem::getcurrentBank()] = rc; // save it here in the event we want to use it.
-        free(reply);
-        return rc;
-}
-
-/**
- * Get current position in file
- *
- * @param fd file handle
- * @return current position in file, 0xfffffffflu == error
- */
-unsigned long fs_tell(uint8_t fd) {
-        fss_r8 *reply;
-        uint8_t *ptr;
-        fss_opfd message = {
-                PIPE_TELL,
-                fd
-        };
-        uint8_t rc;
-        unsigned long offset = 0xfffffffflu;
-        xmem::memory_send((uint8_t *) & message, sizeof (fss_opfd), &to_usb_fs_task);
-        xmem::memory_recv((uint8_t**) & reply, &from_usb_fs_task);
-        rc = reply->res; // error code
-        fs_err[xmem::getcurrentBank()] = rc; // save it here in the event we want to use it.
-        if(!rc) {
-                ptr = &reply->dat;
-                uint32_t *o_p = (uint32_t *)ptr;
-                offset = *o_p;
-        }
-        free(reply);
-        return offset;
-}
-
-/**
- * Seek to position in file.
- *      SEEK_SET The offset is set to offset bytes.
- *      SEEK_CUR The offset is set to its current location plus offset bytes.
- *      SEEK_END The offset is set to the size of the file plus offset bytes.
- *
- * @param fd file handle
- * @param offset
- * @param whence one of SEEK_SET, SEEK_CUR, SEEK_END
- * @return FRESULT, 0 = success
- */
-uint8_t fs_lseek(uint8_t fd, unsigned long offset, int whence) {
-        fss_r8 *reply;
-        uint8_t rc;
-
-        fss_opfd32dat message = {
-                PIPE_LSEEK,
-                fd,
-                offset,
-                whence
-        };
-
-        xmem::memory_send((uint8_t *) & message, sizeof (fss_opfd32dat), &to_usb_fs_task);
-        xmem::memory_recv((uint8_t**) & reply, &from_usb_fs_task);
-        rc = reply->res; // error code
-        fs_err[xmem::getcurrentBank()] = rc; // save it here in the event we want to use it.
-        free(reply);
-        return rc;
-}
-
-/**
- * Read from file
- *
- * @param fd file handle
- * @param data pointer to a buffer large enough to hold requested amount
- * @param amount
- * @return amount actually read in, less than 0 is an error
- */
-int fs_read(uint8_t fd, void *data, uint16_t amount) {
-        uint8_t *ptr;
-        fss_r8 *reply;
-        uint8_t rc = FR_OK;
-        int count = 0;
-        fss_opfd16 message = {
-                PIPE_READ,
-                fd,
-                amount
-        };
-        xmem::memory_send((uint8_t *) & message, sizeof (fss_opfd16), &to_usb_fs_task);
-        xmem::memory_recv((uint8_t**) & reply, &from_usb_fs_task);
-        rc = reply->res; // error code
-        fs_err[xmem::getcurrentBank()] = rc; // save it here in the event we want to use it.
-        if(rc == FR_EOF || rc == FR_OK) {
-                ptr = &reply->dat;
-                uint16_t *r_p = (uint16_t *)ptr;
-                count = *r_p;
-                ptr += sizeof (uint16_t);
-                memcpy(data, ptr, count);
-        }
-
-        if(rc) {
-                if(!count) count = -1;
-        }
-        free(reply);
-        return count;
-}
-
-/**
- * Write to file
- *
- * @param fd file handle
- * @param data pointer to a buffer
- * @param amount
- * @return amount of data actually written, less than 0 is an error.
- */
-int fs_write(uint8_t fd, const void *data, uint16_t amount) {
-        fss_r8 *reply;
-        uint8_t rc;
-        uint16_t *w_p;
-        int count = 0;
-
-        fss_opfd16 *message;
-        uint16_t ltr = sizeof (fss_opfd16) + amount;
-        message = (fss_opfd16 *)xmem::safe_malloc(ltr);
-        message->op = PIPE_WRITE;
-        message->fd = fd;
-        message->amount = amount;
-        memcpy(&(message->data), data, amount);
-
-        xmem::memory_send((uint8_t *)message, ltr, &to_usb_fs_task);
-        free(message);
-        xmem::memory_recv((uint8_t**) & reply, &from_usb_fs_task);
-        rc = reply->res; // error code
-        fs_err[xmem::getcurrentBank()] = rc; // save it here in the event we want to use it.
-        w_p = (uint16_t *) & reply->dat;
-        //printf(" Write: %i %i ", *w_p, rc);
-        count = *w_p;
-
-        if(rc) {
-                if(!count) count = -1;
-        }
-        free(reply);
-        return count;
-}
-
-/**
- * Remove (delete) file or directory. An absolute, fully resolved canonical path is required!
- * Relative paths and links are _not_ supported.
- *
- * @param path
- * @return FRESULT, 0 = success
- */
-uint8_t fs_unlink(const char *path) {
-        fss_r8 *reply;
-        const char *pathtrunc;
-        uint8_t rc;
-        uint16_t ltr;
-        fss_opdrcol *message;
-        uint8_t vol = _fs_util_vol(path);
-
-        if(vol == _VOLUMES) {
-                rc = FR_NO_PATH;
-        } else {
-                pathtrunc = _fs_util_trunkpath(path, vol);
-                ltr = strlen(pathtrunc) + sizeof (fss_opdrcol);
-
-                message = (fss_opdrcol *)xmem::safe_malloc(ltr);
-
-                message->op = PIPE_UNLINK;
-                message->drive = '0' + vol;
-                message->colon = ':';
-                strcpy((char *)&message->path, pathtrunc);
-                xmem::memory_send((uint8_t*)message, ltr, &to_usb_fs_task);
-                free(message);
-                xmem::memory_recv((uint8_t**) & reply, &from_usb_fs_task);
-                rc = reply->res; // error code
-                free(reply);
-        }
-        fs_err[xmem::getcurrentBank()] = rc; // save it here in the event we want to use it.
-        return rc;
-}
-
-/**
- * Change attribute flags on a file.
- *
- * @param path file or directory
- * @param mode AM_RDO|AM_ARC|AM_SYS|AM_HID in any combination
- * @return FRESULT, 0 = success
- */
-uint8_t fs_chmod(const char *path, uint8_t mode) {
-        fss_r8 *reply;
-        uint8_t rc;
-        const char *pathtrunc;
-
-        uint8_t vol = _fs_util_vol(path);
-
-        if(vol == _VOLUMES) {
-                fs_err[xmem::getcurrentBank()] = FR_NO_PATH;
-                return FR_NO_PATH;
-        }
-
-
-        pathtrunc = _fs_util_trunkpath(path, vol);
-
-        uint16_t ltr = strlen(pathtrunc) + sizeof (fss_op8drcol);
-
-        fss_op8drcol *message = (fss_op8drcol *)xmem::safe_malloc(ltr);
-        message->op = PIPE_CHMOD;
-        message->mode = mode;
-        message->drive = '0' + vol;
-        message->colon = ':';
-        message->path = 0x00;
-        strcat((char *)&message->path, (char *)pathtrunc);
-
-        xmem::memory_send((uint8_t*)message, ltr, &to_usb_fs_task);
-        free(message);
-
-
-        xmem::memory_recv((uint8_t**) & reply, &from_usb_fs_task);
-        rc = reply->res; // error code
-        fs_err[xmem::getcurrentBank()] = rc; // save it here in the event we want to use it.
-        free(reply);
-        return rc;
-}
-
-/**
- * Create a new directory
- *
- * @param path new directory
- * @param mode AM_RDO|AM_ARC|AM_SYS|AM_HID in any combination
- * @return FRESULT, 0 = success
- */
-uint8_t fs_mkdir(const char *path, uint8_t mode) {
-        fss_r8 *reply;
-        uint8_t rc;
-        const char *pathtrunc;
-
-        uint8_t vol = _fs_util_vol(path);
-
-        if(vol == _VOLUMES) {
-                fs_err[xmem::getcurrentBank()] = FR_NO_PATH;
-                return FR_NO_PATH;
-        }
-
-
-        pathtrunc = _fs_util_trunkpath(path, vol);
-
-        uint16_t ltr = strlen(pathtrunc) + sizeof (fss_op8drcol);
-        fss_op8drcol *message = (fss_op8drcol *)xmem::safe_malloc(ltr);
-        message->op = PIPE_MKDIR;
-        message->mode = mode;
-        message->drive = '0' + vol;
-        message->colon = ':';
-        message->path = 0x00;
-        strcat((char *)&message->path, (char *)pathtrunc);
-
-        xmem::memory_send((uint8_t*)message, ltr, &to_usb_fs_task);
-        free(message);
-        xmem::memory_recv((uint8_t**) & reply, &from_usb_fs_task);
-        rc = reply->res; // error code
-        fs_err[xmem::getcurrentBank()] = rc; // save it here in the event we want to use it.
-        free(reply);
-        return rc;
-}
-
-/**
- * Modify file time stamp.
- *
- * @param path File to update time stamp
- * @param timesec time in seconds since 1/1/1900
- * @return FRESULT, 0 = success
- */
-uint8_t fs_utime(const char *path, time_t timesec) {
-        fss_r8 *reply;
-        uint8_t rc;
-        const char *pathtrunc;
-        uint8_t vol = _fs_util_vol(path);
-
-
-        if(vol == _VOLUMES) {
-                fs_err[xmem::getcurrentBank()] = FR_NO_PATH;
-                return FR_NO_PATH;
-        }
-
-        pathtrunc = _fs_util_trunkpath(path, vol);
-        uint16_t ltr = strlen(pathtrunc) + sizeof (fss_op32drcol);
-
-        fss_op32drcol *message = (fss_op32drcol *)xmem::safe_malloc(ltr);
-        message->op = PIPE_UTIME;
-        message->data = DateTime(timesec).FatPacked();
-        message->drive = '0' + vol;
-        message->colon = ':';
-        message->path = 0x00;
-        strcat((char *)&message->path, (char *)pathtrunc);
-
-        xmem::memory_send((uint8_t*)message, ltr, &to_usb_fs_task);
-        free(message);
-
-        xmem::memory_recv((uint8_t**) & reply, &from_usb_fs_task);
-        rc = reply->res; // error code
-        fs_err[xmem::getcurrentBank()] = rc; // save it here in the event we want to use it.
-        free(reply);
-        return rc;
-
-}
-
-/**
- * Return information about a file.
- *
- * @param path File to return information about
- * @param buf pointer to FILINFO structure, which is filled in upon success.
- * @return FRESULT, 0 = success
- */
-uint8_t fs_stat(const char *path, FILINFO *buf) {
-        fss_r8 *reply;
-        uint8_t rc;
-        const char *pathtrunc;
-        uint8_t vol = _fs_util_vol(path);
-
-        if(vol == _VOLUMES) {
-                fs_err[xmem::getcurrentBank()] = FR_NO_PATH;
-                return FR_NO_PATH;
-        }
-
-        pathtrunc = _fs_util_trunkpath(path, vol);
-
-        uint16_t ltr = strlen(pathtrunc) + sizeof (fss_opdrcol);
-        fss_opdrcol *message = (fss_opdrcol *)xmem::safe_malloc(ltr);
-
-        message->op = PIPE_STAT;
-        message->drive = '0' + vol;
-        message->colon = ':';
-        message->path = 0x00;
-        strcat((char *)&message->path, pathtrunc);
-
-        xmem::memory_send((uint8_t*)message, ltr, &to_usb_fs_task);
-        free(message);
-        xmem::memory_recv((uint8_t**) & reply, &from_usb_fs_task);
-        rc = reply->res; // error code
-        fs_err[xmem::getcurrentBank()] = rc; // save it here in the event we want to use it.
-        if(!rc) {
-                memcpy(buf, &reply->dat, sizeof (FILINFO));
-        }
-        free(reply);
-        return rc;
-}
-
-/**
- * Rename a file, moving it between directories if required.
- * Does not move a file between mounted volumes.
- *
- * @param oldpath old file name
- * @param newpath new file name
- * @return FRESULT, 0 = success
- */
-uint8_t fs_rename(const char *oldpath, const char *newpath) {
-        uint8_t rc;
-        uint8_t *ptr;
-        fss_r8 *reply;
-        uint8_t vol = _fs_util_vol(oldpath);
-
-        if(vol == _VOLUMES) {
-                fs_err[xmem::getcurrentBank()] = FR_NO_PATH;
-                return FR_NO_PATH;
-        }
-        if(vol != _fs_util_vol(newpath)) {
-                fs_err[xmem::getcurrentBank()] = FR_EXDEV;
-                return FR_EXDEV;
-        }
-
-        const char *oldpathtrunc = _fs_util_trunkpath(oldpath, vol);
-        const char *newpathtrunc = _fs_util_trunkpath(newpath, vol);
-
-        uint16_t ltr = strlen(oldpathtrunc) + strlen(newpathtrunc) + sizeof (fss_opdrcol) + 1;
-
-        fss_opdrcol *message = (fss_opdrcol *)xmem::safe_malloc(ltr);
-        message->op = PIPE_RENAME;
-        message->drive = '0' + vol;
-        message->colon = ':';
-        message->path = 0x00;
-        ptr = &(message->path);
-
-        strcat((char *)ptr, (char *)oldpathtrunc);
-        ptr += strlen(oldpathtrunc) + 1;
-        *ptr = 0x00;
-        strcat((char *)ptr, (char *)newpathtrunc);
-        xmem::memory_send((uint8_t*)message, ltr, &to_usb_fs_task);
-        free(message);
-        xmem::memory_recv((uint8_t**) & reply, &from_usb_fs_task);
-        rc = reply->res; // error code
-        fs_err[xmem::getcurrentBank()] = rc; // save it here in the event we want to use it.
-        free(reply);
-        return rc;
-}
-
-/**
- * Get free space available on mount point.
- *
- * @param path mount point
- * @return free space available in bytes. If there is no volume or write protected, returns zero (full).
- */
-uint64_t fs_getfree(const char *path) {
-        uint8_t rc;
-        uint8_t *ptr;
-        fss_r8 *reply;
-        uint8_t vol = _fs_util_vol(path);
-
-        uint64_t *q;
-        uint64_t rv = 0llu;
-        if(vol == _VOLUMES) {
-                fs_err[xmem::getcurrentBank()] = FR_NO_PATH;
-        } else {
-                fss_opdrcol message = {
-                        PIPE_FREE,
-                        '0' + vol,
-                        ':',
-                        0x00
-                };
-
-                xmem::memory_send((uint8_t*) & message, sizeof (fss_opdrcol), &to_usb_fs_task);
-
-                xmem::memory_recv((uint8_t**) & reply, &from_usb_fs_task);
-                rc = reply->res; // error code
-                fs_err[xmem::getcurrentBank()] = rc; // save it here in the event we want to use it.
-                if(!rc) {
-                        ptr++;
-                        q = (uint64_t *) & reply->dat;
-                        rv = *q;
-                }
-                free(reply);
-        }
-        return (uint64_t)rv;
-}
-
-char *fs_mount_lbl(uint8_t vol) {
-        fss_r8 *reply;
-        fss_opfd message = {
-                PIPE_MOUNT_LBL,
-                vol
-        };
-        uint8_t rc;
-        char *lbl = NULL;
-        xmem::memory_send((uint8_t *) & message, sizeof (fss_opfd), &to_usb_fs_task);
-        xmem::memory_recv((uint8_t**) & reply, &from_usb_fs_task);
-        rc = reply->res; // error code
-        fs_err[xmem::getcurrentBank()] = rc; // save it here in the event we want to use it.
-        if(!rc) {
-                char *rlbl = (char *)&reply->dat;
-                lbl = (char *)xmem::safe_malloc(1 + strlen(rlbl));
-                //*lbl = 0x00;
-                strcpy(lbl, rlbl);
-        }
-        free(reply);
-        return lbl;
-}
-
-uint8_t fs_mountcount(void) {
-        uint8_t message = PIPE_MOUNT_CNT;
-        fss_r8 *reply;
-        uint8_t rc;
-        xmem::memory_send(&message, 1U, &to_usb_fs_task);
-        xmem::memory_recv((uint8_t**) & reply, &from_usb_fs_task);
-        rc = reply->res; // error code
-        fs_err[xmem::getcurrentBank()] = rc; // save it here in the event we want to use it.
-        message = reply->dat;
-        free(reply);
-        return message;
-}
-
-}
+// internal stuff
+static PFAT *Fats[_VOLUMES];
+static storage_t *sto[_VOLUMES];
+static boolean last_ready[MAX_USB_MS_DRIVERS][MASS_MAX_SUPPORTED_LUN];
+static boolean wasnull[MAX_USB_MS_DRIVERS];
 
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
@@ -939,22 +176,21 @@ uint8_t fs_mountcount(void) {
 
 namespace GenericFileSystem {
 
-        PFAT *Fats[_VOLUMES];
-        storage_t *sto[_VOLUMES];
-        boolean last_ready[MAX_USB_MS_DRIVERS][MASS_MAX_SUPPORTED_LUN];
-        boolean wasnull[MAX_USB_MS_DRIVERS];
-
         /**
          * Set up transaction pipes
          *
          * @return 1 for success
          */
         int Setup(void) {
+#ifdef __AVR__
                 // initialize memory transaction pipes
                 xmem::memory_init(&to_usb_fs_task);
                 xmem::memory_init(&from_usb_fs_task);
+#endif
                 return 1;
         }
+
+#ifdef __AVR__
 
         /**
          * Called from USB polling task. Warning: Huge ugly block of code!
@@ -1003,115 +239,110 @@ namespace GenericFileSystem {
                                                 }
                                                 i--;
                                                 ptr++;
-                                                //printf(" Handle %i ", i);
                                                 if(i < _FS_LOCK) {
                                                         if(fhandles[i]->fs != NULL) {
-                                                                if(fhandles[i]->fs != NULL) {
 
-                                                                        switch(d) {
+                                                                switch(d) {
 
-                                                                                        ///////////////////////////////////////
+                                                                                ///////////////////////////////////////
 
-                                                                                case PIPE_FLUSH:
-                                                                                {
-                                                                                        rc = FR_OK;
-                                                                                        f_sync(fhandles[i]);
-                                                                                        break;
-                                                                                }
-
-                                                                                        ///////////////////////////////////////
-
-                                                                                case PIPE_CLOSE: // close
-                                                                                {
-                                                                                        rc = f_close(fhandles[i]);
-                                                                                        fhandles[i]->fs = NULL;
-                                                                                        break;
-                                                                                }
-
-                                                                                        ///////////////////////////////////////
-
-                                                                                case PIPE_READ: // read bytes
-                                                                                {
-                                                                                        uint16_t *r_p = (uint16_t *)ptr;
-                                                                                        rs = *r_p + sizeof (fss_r8) + sizeof (uint16_t);
-                                                                                        free(reply);
-                                                                                        reply = (fss_r8 *)xmem::safe_malloc(rs);
-                                                                                        ptr = &reply->dat;
-                                                                                        ptr += sizeof (uint16_t);
-                                                                                        rc = f_read(fhandles[i], ptr, *r_p, &bc);
-                                                                                        if(bc != rs) rc = FR_EOF;
-                                                                                        ptr -= sizeof (uint16_t);
-                                                                                        r_p = (uint16_t *)ptr;
-                                                                                        *r_p = bc;
-                                                                                        break;
-                                                                                }
-
-                                                                                        ///////////////////////////////////////
-
-                                                                                case PIPE_WRITE: // write bytes
-                                                                                {
-                                                                                        //Serial.write("WRITE");
-                                                                                        fss_opfd16 *m = (fss_opfd16 *)message;
-                                                                                        rc = f_write(fhandles[i], &(m->data), m->amount, &bc);
-                                                                                        //Serial.write(" DONE\r\n");
-                                                                                        rs = sizeof (fss_r8) + sizeof (uint16_t);
-                                                                                        free(reply);
-                                                                                        reply = (fss_r8 *)xmem::safe_malloc(rs);
-                                                                                        ptr = &reply->dat;
-                                                                                        uint16_t *c_p = (uint16_t *)ptr;
-                                                                                        *c_p = bc;
-                                                                                        break;
-                                                                                }
-                                                                                        ///////////////////////////////////////
-
-                                                                                case PIPE_LSEEK: // seek to 32 bit position (lseek)
-                                                                                {
-                                                                                        DWORD *offset = (DWORD *)ptr;
-                                                                                        ptr += 4;
-                                                                                        FBYTE whence = *ptr;
-                                                                                        rc = f_clseek(fhandles[i], *offset, whence);
-                                                                                        break;
-                                                                                }
-
-                                                                                        ///////////////////////////////////////
-
-                                                                                case PIPE_TELL:
-                                                                                {
-                                                                                        rc = FR_OK;
-                                                                                        rs = sizeof (fss_r8) + sizeof (uint32_t);
-                                                                                        free(reply);
-                                                                                        reply = (fss_r8 *)xmem::safe_malloc(rs);
-                                                                                        // f_tell is a macro...
-                                                                                        uint32_t *f_z = (uint32_t *) & reply->dat;
-                                                                                        *f_z = f_tell(fhandles[i]);
-                                                                                        break;
-                                                                                }
-
-                                                                                        ///////////////////////////////////////
-
-                                                                                case PIPE_EOF:
-                                                                                        rc = FR_OK;
-                                                                                        reply->dat = f_eof(fhandles[i]);
-                                                                                        break;
-
-                                                                                        ///////////////////////////////////////
-
-                                                                                case PIPE_TRUNC:
-                                                                                        rc = f_truncate(fhandles[i]);
-                                                                                        break;
-
-                                                                                        ///////////////////////////////////////
-
-                                                                                case PIPE_SIZE:
-                                                                                        rc = FR_OK;
-                                                                                        rs = 5;
-                                                                                        rs = sizeof (fss_r8) + sizeof (uint32_t);
-                                                                                        reply = (fss_r8 *)xmem::safe_malloc(rs);
-                                                                                        // f_size is a macro...
-                                                                                        uint32_t *f_z = (uint32_t *) & reply->dat;
-                                                                                        *f_z = f_size(fhandles[i]);
-                                                                                        break;
+                                                                        case PIPE_FLUSH:
+                                                                        {
+                                                                                rc = FR_OK;
+                                                                                f_sync(fhandles[i]);
+                                                                                break;
                                                                         }
+
+                                                                                ///////////////////////////////////////
+
+                                                                        case PIPE_CLOSE: // close
+                                                                        {
+                                                                                rc = f_close(fhandles[i]);
+                                                                                fhandles[i]->fs = NULL;
+                                                                                break;
+                                                                        }
+
+                                                                                ///////////////////////////////////////
+
+                                                                        case PIPE_READ: // read bytes
+                                                                        {
+                                                                                uint16_t *r_p = (uint16_t *)ptr;
+                                                                                rs = *r_p + sizeof (fss_r8) + sizeof (uint16_t);
+                                                                                free(reply);
+                                                                                reply = (fss_r8 *)xmem::safe_malloc(rs);
+                                                                                ptr = &reply->dat;
+                                                                                ptr += sizeof (uint16_t);
+                                                                                rc = f_read(fhandles[i], ptr, *r_p, &bc);
+                                                                                if(bc != rs) rc = FR_EOF;
+                                                                                ptr -= sizeof (uint16_t);
+                                                                                r_p = (uint16_t *)ptr;
+                                                                                *r_p = bc;
+                                                                                break;
+                                                                        }
+
+                                                                                ///////////////////////////////////////
+
+                                                                        case PIPE_WRITE: // write bytes
+                                                                        {
+                                                                                fss_opfd16 *m = (fss_opfd16 *)message;
+                                                                                rc = f_write(fhandles[i], &(m->data), m->amount, &bc);
+                                                                                rs = sizeof (fss_r8) + sizeof (uint16_t);
+                                                                                free(reply);
+                                                                                reply = (fss_r8 *)xmem::safe_malloc(rs);
+                                                                                ptr = &reply->dat;
+                                                                                uint16_t *c_p = (uint16_t *)ptr;
+                                                                                *c_p = bc;
+                                                                                break;
+                                                                        }
+                                                                                ///////////////////////////////////////
+
+                                                                        case PIPE_LSEEK: // seek to 32 bit position (lseek)
+                                                                        {
+                                                                                DWORD *offset = (DWORD *)ptr;
+                                                                                ptr += 4;
+                                                                                FBYTE whence = *ptr;
+                                                                                rc = f_clseek(fhandles[i], *offset, whence);
+                                                                                break;
+                                                                        }
+
+                                                                                ///////////////////////////////////////
+
+                                                                        case PIPE_TELL:
+                                                                        {
+                                                                                rc = FR_OK;
+                                                                                rs = sizeof (fss_r8) + sizeof (uint32_t);
+                                                                                free(reply);
+                                                                                reply = (fss_r8 *)xmem::safe_malloc(rs);
+                                                                                // f_tell is a macro...
+                                                                                uint32_t *f_z = (uint32_t *) & reply->dat;
+                                                                                *f_z = f_tell(fhandles[i]);
+                                                                                break;
+                                                                        }
+
+                                                                                ///////////////////////////////////////
+
+                                                                        case PIPE_EOF:
+                                                                                rc = FR_OK;
+                                                                                reply->dat = f_eof(fhandles[i]);
+                                                                                break;
+
+                                                                                ///////////////////////////////////////
+
+                                                                        case PIPE_TRUNC:
+                                                                                rc = f_truncate(fhandles[i]);
+                                                                                break;
+
+                                                                                ///////////////////////////////////////
+
+                                                                        case PIPE_SIZE:
+                                                                                rc = FR_OK;
+                                                                                rs = 5;
+                                                                                rs = sizeof (fss_r8) + sizeof (uint32_t);
+                                                                                reply = (fss_r8 *)xmem::safe_malloc(rs);
+                                                                                // f_size is a macro...
+                                                                                uint32_t *f_z = (uint32_t *) & reply->dat;
+                                                                                *f_z = f_size(fhandles[i]);
+                                                                                break;
                                                                 }
                                                         }
                                                 } else {
@@ -1155,8 +386,8 @@ namespace GenericFileSystem {
                                                                                                 rc = FR_EOF;
                                                                                         }
                                                                                 }
-                                                                                break;
                                                                         }
+                                                                        break;
                                                                 }
                                                         }
                                                 }
@@ -1171,10 +402,6 @@ namespace GenericFileSystem {
 
                                         case PIPE_OPEN: // open, return a handle
                                         {
-                                                //Serial.write("\r\nOPEN ");
-                                                //Serial.write((char *)ptr);
-                                                //Serial.write("\r\n");
-                                                //printf("\r\nOPEN %s\r\n", (char *)ptr);
                                                 switch(*ptr) {
                                                         case 'f': // file
                                                                 // mode r
@@ -1186,7 +413,6 @@ namespace GenericFileSystem {
                                                                 char *m = (char *)ptr;
                                                                 ptr++;
                                                                 char *name = (char *)ptr;
-                                                                //printf("\tfile '%s', mode %c\r\n", name, *m);
                                                                 for(i = 0; i < _FS_LOCK; i++) {
                                                                         if(fhandles[i]->fs == NULL) break;
                                                                 }
@@ -1210,13 +436,13 @@ namespace GenericFileSystem {
                                                                                         break;
                                                                         }
                                                                         if(rc != FR_OK) {
-                                                                                //printf("Open err %i ", 0xff & rc);
+                                                                                reply->dat = 0;
                                                                                 fhandles[i]->fs = NULL;
                                                                         }
                                                                 }
                                                                 break;
                                                         }
-                                                        case 'd': // dir
+                                                        case 'd': // dir, mode is ignored, of course
                                                         {
                                                                 ptr++;
                                                                 for(i = 0; i < _FS_LOCK; i++) {
@@ -1329,9 +555,6 @@ namespace GenericFileSystem {
                                                 uint64_t *bfptr;
                                                 rc = f_getfree((TCHAR *)ptr, &blksfree, &fs);
                                                 if(rc == FR_OK) {
-                                                        //printf("Sector size %u, Sectors in a Cluster %u\r\n", fs->pfat->storage->SectorSize, fs->csize);
-                                                        //stosize = fs->pfat->storage->SectorSize * fs->csize;
-                                                        //printf("Cluster size %u, Free blocks %lu\r\n", stosize, blksfree);
                                                         bytesfree = blksfree; // blocks
                                                         bytesfree *= fs->csize; // sectors
                                                         bytesfree *= fs->pfat->storage->SectorSize; // bytes
@@ -1406,11 +629,13 @@ namespace GenericFileSystem {
                 //else xmem::Yield();
 
         }
+#endif
 
         /**
          * USB polling. This method checks the USB state, and watches for media
          * insertion and removal. It also automatically mounts newly
-         * discovered media.
+         * discovered media, and clears mounts for removed media.
+         * On the AVR with XMEM2, it also processes the command queue requests.
          *
          * @param current_state current USB driver state
          * @param last_state last known USB driver state
@@ -1428,12 +653,10 @@ namespace GenericFileSystem {
                                 }
                                 for(int i = 0; i < _VOLUMES; i++) {
                                         if(Fats[i] != NULL) {
-                                                //Serial.write("Del fat");
                                                 delete Fats[i];
                                                 Fats[i] = NULL;
                                         }
                                         if(sto[i]->private_data != NULL) {
-                                                //Serial.write("Del sto");
                                                 delete sto[i]->private_data;
                                                 sto[i]->private_data = NULL;
                                         }
@@ -1457,7 +680,6 @@ namespace GenericFileSystem {
                                                         last_ready[B][LUN] = OK; //!last_ready[B][LUN];
                                                         if(OK) { // media inserted
                                                                 int nm = (int)f_next_mount();
-                                                                //printf("MEDIA INSERTED Bulk %i, LUN %i, next mount %i\r\n", B, LUN, nm);
                                                                 if(nm < _VOLUMES) {
                                                                         sto[nm]->private_data = new pvt_t;
                                                                         ((pvt_t *)sto[nm]->private_data)->lun = LUN;
@@ -1492,7 +714,6 @@ namespace GenericFileSystem {
                                                                                                         sto[nm]->SectorSize = UHS_USB_BulkOnly[B]->GetSectorSize(LUN);
                                                                                                         Fats[nm] = new PFAT(sto[nm], nm, apart->firstSector);
                                                                                                         if(Fats[nm]->MountStatus()) {
-                                                                                                                //printf_P(PSTR("Superblock error %x\r\n"), Fats[nm]->Good());
                                                                                                                 delete Fats[nm];
                                                                                                                 Fats[nm] = NULL;
                                                                                                                 delete sto[nm]->private_data;
@@ -1505,7 +726,6 @@ namespace GenericFileSystem {
                                                                                 // try superblock
                                                                                 Fats[nm] = new PFAT(sto[nm], nm, 0);
                                                                                 if(Fats[nm]->MountStatus()) {
-                                                                                        //printf_P(PSTR("Superblock error %x\r\n"), Fats[nm]->Good());
                                                                                         delete Fats[nm];
                                                                                         Fats[nm] = NULL;
                                                                                         delete sto[nm]->private_data;
@@ -1515,7 +735,6 @@ namespace GenericFileSystem {
                                                                         delete PT;
                                                                 }
                                                         } else { // media removed
-                                                                //printf("MEDIA REMOVED Physical Volume %i, Bulk %i, LUN %i", l, B, LUN);
                                                                 for(int k = 0; k < _VOLUMES; k++) {
                                                                         if(Fats[k] != NULL) {
                                                                                 if(((pvt_t *)sto[k]->private_data)->B == B && ((pvt_t *)sto[k]->private_data)->lun == LUN) {
@@ -1549,7 +768,9 @@ namespace GenericFileSystem {
                                 }
                         }
                 }
+#ifdef __AVR__
                 return (process_fs_pipe());
+#endif
         }
 
         /**
@@ -1606,3 +827,1229 @@ namespace GenericFileSystem {
         }
 }
 
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
+// Utilities
+extern "C" {
+
+        /**
+         * Return a pointer to path name with mount point stripped, unless
+         * the mount point is '/'
+         *
+         * @param path
+         * @param vol
+         * @return pointer to path name
+         */
+        const char *_fs_util_trunkpath(const char *path, uint8_t vol) {
+
+                const char *pathtrunc = path;
+                char *s = fs_mount_lbl(vol);
+                if(s != NULL) {
+                        pathtrunc += strlen(s);
+                        free(s);
+                }
+                return pathtrunc;
+        }
+
+        /**
+         * Convert a path to a volume number.
+         *
+         * @param path
+         * @return volume number, or _VOLUMES on error
+         *
+         */
+        uint8_t _fs_util_vol(const char *path) {
+                uint8_t *ptr;
+                char *fname;
+                uint8_t vol = _VOLUMES;
+
+                if((strlen(path) < 1) || *path != '/' || strstr(path, "/./") || strstr(path, "/../") || strstr(path, "//")) {
+#ifdef __AVR__
+                        fs_err[xmem::getcurrentBank()] = FR_INVALID_NAME;
+#elif defined(CORE_TEENSY) && defined(__arm__)
+                        fs_err = FR_INVALID_NAME;
+#endif
+                } else {
+#ifdef __AVR__
+                        fname = (char *)xmem::safe_malloc(strlen(path) + 1);
+#elif defined(CORE_TEENSY) && defined(__arm__)
+                        fname = (char *)malloc(strlen(path) + 1);
+#endif
+                        *fname = 0x00;
+                        strcat(fname, path);
+                        ptr = (uint8_t *)fname;
+                        ptr++; // skip first '/'
+                        while(*ptr) {
+                                if(*ptr == '/') {
+                                        break;
+                                }
+                                ptr++;
+                        }
+                        if(*ptr) {
+                                *ptr = 0x00;
+                                vol = fs_ready((char *)fname);
+                        }
+                        // Could be a sub-dir in the path, so try just the root.
+                        if(vol == _VOLUMES) {
+                                // root of "/"
+                                vol = fs_ready("/");
+                        }
+                        free(fname);
+                }
+                return vol;
+        }
+
+#if defined(CORE_TEENSY) && defined(__arm__)
+
+        /**
+         * Return a pointer to path name suitable for FATfs
+         *
+         * @param path
+         * @param vol
+         * @return pointer to new path name, must be freed by caller
+         */
+        const char *_fs_util_FATpath(const char *path, uint8_t vol) {
+                char *FATpath = (char *)malloc(3 + strlen(path));
+                char *ptr = FATpath;
+                *ptr = '0' + vol;
+                ptr++;
+                *ptr = ':';
+                ptr++;
+                *ptr = 0;
+                strcat(FATpath, path);
+                const char *rv = FATpath;
+                return rv;
+        }
+#endif
+        // functions
+
+        /**
+         * Check if mount point is ready
+         *
+         * @param path mount point path
+         * @return volume number, or _VOLUMES on error
+         */
+        uint8_t fs_ready(const char *path) {
+                // path -> volume number
+#ifdef __AVR__
+                fss_r8 *reply;
+#endif
+                uint8_t vol;
+#ifdef __AVR__
+                uint8_t rc;
+                uint16_t ltr = strlen(path) + 2;
+                fss_opfd *message = (fss_opfd *)xmem::safe_malloc(ltr);
+                message->op = PIPE_VOLUME;
+                message->fd = 0x00;
+                strcat((char *)&message->fd, path);
+                xmem::memory_send((uint8_t*)message, ltr, &to_usb_fs_task);
+                free(message);
+                xmem::memory_recv((uint8_t**) & reply, &from_usb_fs_task);
+                rc = reply->res; // error code
+                fs_err[xmem::getcurrentBank()] = rc; // save it here in the event we want to use it.
+                vol = reply->dat;
+                free(reply);
+                if(rc) {
+                        return _VOLUMES; // error
+                }
+#elif defined(CORE_TEENSY) && defined(__arm__)
+
+                USB_ISR_PROTECTED_CALL() {
+                        vol = _VOLUMES;
+                        fs_err = FR_NO_PATH;
+                        for(uint8_t x = 0; x < _VOLUMES; x++) {
+                                if(Fats[x]) {
+                                        if(!strcasecmp((char *)Fats[x]->label, path)) {
+                                                fs_err = FR_OK;
+                                                vol = Fats[x]->volmap; // should be equal to x
+                                                break;
+                                        }
+                                }
+                        }
+                }
+#endif
+                return vol;
+        }
+
+        uint8_t fs_opendir(const char *path) {
+
+                uint8_t fd;
+                uint8_t rc;
+                const char *pathtrunc;
+#ifdef __AVR__
+                uint8_t *ptr;
+                fss_r8 *reply;
+                char *message;
+#endif
+                uint8_t vol = _fs_util_vol(path);
+
+                if(vol == _VOLUMES) {
+#ifdef __AVR__
+                        fs_err[xmem::getcurrentBank()] = FR_NO_PATH;
+#elif defined(CORE_TEENSY) && defined(__arm__)
+                        fs_err = FR_NO_PATH;
+#endif
+                        return 0;
+                }
+
+
+                pathtrunc = _fs_util_trunkpath(path, vol);
+#ifdef __AVR__
+                uint16_t ltr = strlen(pathtrunc) + 5;
+                message = (char *)xmem::safe_malloc(ltr);
+                ptr = (uint8_t *)message;
+                *ptr = PIPE_OPEN; // open
+                ptr++;
+                *ptr = 'd'; // Directory
+                ptr++;
+                // volume number
+                *ptr = '0' + vol;
+                ptr++;
+                *ptr = ':';
+                ptr++;
+                *ptr = 0x00;
+                strcat((char *)ptr, (char *)pathtrunc);
+                xmem::memory_send((uint8_t*)message, ltr, &to_usb_fs_task);
+                free(message);
+                xmem::memory_recv((uint8_t**) & reply, &from_usb_fs_task);
+                rc = reply->res; // error code
+                fs_err[xmem::getcurrentBank()] = rc; // save it here in the event we want to use it.
+                fd = reply->dat;
+                free(reply);
+                if(rc) {
+                        return 0; // error
+                }
+#elif defined(CORE_TEENSY) && defined(__arm__)
+                fd = 0;
+                int i;
+
+                USB_ISR_PROTECTED_CALL() {
+                        for(i = 0; i < _FS_LOCK; i++) {
+                                if(dhandles[i]->fs == NULL) break;
+                        }
+                        if(i < _FS_LOCK) {
+                                fd = 1 + i + _FS_LOCK;
+                                const char *ptr = _fs_util_FATpath(pathtrunc, vol);
+                                rc = f_opendir(dhandles[i], (TCHAR *)ptr);
+                                free((void *)ptr);
+                                if(rc != FR_OK) {
+                                        dhandles[i]->fs = NULL;
+                                        fd = 0;
+                                        fs_err = FR_NO_PATH;
+                                }
+                        }
+                }
+#endif
+                return fd;
+        }
+
+        /**
+         * Open a file. An absolute, fully resolved canonical path is required!
+         * Relative paths and links are _not_ supported.
+         *
+         * @param path
+         * @param mode one of rRwWxX
+         * @return returns file handle number, or 0 on error
+         */
+        uint8_t fs_open(const char *path, const char *mode) {
+#ifdef __AVR__
+
+                fss_r8 *reply;
+#endif
+                uint8_t fd;
+                uint8_t rc;
+                const char *pathtrunc;
+
+                uint8_t vol = _fs_util_vol(path);
+
+                if(vol == _VOLUMES) {
+#ifdef __AVR__
+                        fs_err[xmem::getcurrentBank()] = FR_NO_PATH;
+#elif defined(CORE_TEENSY) && defined(__arm__)
+                        fs_err = FR_NO_PATH;
+#endif
+                        return 0;
+                }
+
+                pathtrunc = _fs_util_trunkpath(path, vol);
+#ifdef __AVR__
+
+                uint16_t lpt = strlen(pathtrunc) + sizeof (fss_op88drcol);
+                fss_op88drcol *message = (fss_op88drcol *)xmem::safe_malloc(lpt);
+                message->op = PIPE_OPEN;
+                message->object = 'f';
+                message->mode = *mode;
+                message->drive = '0' + vol;
+                message->colon = ':';
+                message->path = 0x00;
+
+                strcat((char *)&message->path, (char *)pathtrunc);
+
+                xmem::memory_send((uint8_t*)message, lpt, &to_usb_fs_task);
+                free(message);
+                xmem::memory_recv((uint8_t**) & reply, &from_usb_fs_task);
+                rc = reply->res; // error code
+                fs_err[xmem::getcurrentBank()] = rc; // save it here in the event we want to use it.
+                fd = reply->dat;
+                free(reply);
+                if(rc) {
+                        return 0; // error
+                }
+#elif defined(CORE_TEENSY) && defined(__arm__)
+
+                fd = 0;
+                int i;
+
+                USB_ISR_PROTECTED_CALL() {
+                        for(i = 0; i < _FS_LOCK; i++) {
+                                if(fhandles[i]->fs == NULL) break;
+                        }
+                        if(i < _FS_LOCK) {
+                                fd = i + 1;
+                                const char *name = _fs_util_FATpath(pathtrunc, vol);
+                                switch(*mode) {
+                                        case 'r':
+                                                rc = f_open(fhandles[i], name, FA_READ);
+                                                break;
+                                        case 'w':
+                                                rc = f_open(fhandles[i], name, FA_WRITE | FA_CREATE_ALWAYS);
+                                                break;
+                                        case 'x':
+                                                rc = f_open(fhandles[i], name, FA_READ | FA_WRITE);
+                                                break;
+                                        case 'W':
+                                                rc = f_open(fhandles[i], name, FA_WRITE);
+                                                break;
+                                        case 'X':
+                                                rc = f_open(fhandles[i], name, FA_READ | FA_WRITE | FA_CREATE_ALWAYS);
+                                                break;
+                                }
+                                free((void *)name);
+                                if(rc != FR_OK) {
+                                        fhandles[i]->fs = NULL;
+                                        fd = 0;
+                                        fs_err = rc;
+                                }
+                        }
+
+                }
+#endif
+                return fd;
+        }
+
+        /**
+         * Close file
+         * @param fd file handle to close
+         *
+         * @return FRESULT, 0 = success
+         */
+        int fs_close(uint8_t fd) {
+                uint8_t rc;
+#ifdef __AVR__
+                fss_r8 *reply;
+                fss_opfd message = {
+                        PIPE_CLOSE,
+                        fd
+                };
+                xmem::memory_send((uint8_t *) & message, sizeof (fss_opfd), &to_usb_fs_task);
+                xmem::memory_recv((uint8_t**) & reply, &from_usb_fs_task);
+                rc = reply->res; // error code
+                fs_err[xmem::getcurrentBank()] = rc; // save it here in the event we want to use it.
+                free(reply);
+#elif defined(CORE_TEENSY) && defined(__arm__)
+                fd--;
+
+                USB_ISR_PROTECTED_CALL() {
+                        if(fd < _FS_LOCK && fhandles[fd]->fs != NULL) {
+                                fs_err = f_close(fhandles[fd]);
+                                fhandles[fd]->fs = NULL;
+                        } else fs_err = FR_INVALID_PARAMETER;
+                }
+#endif
+                return fs_err;
+        }
+
+        /**
+         * Close directory
+         *
+         * @param dh directory handle to close
+         * @return FRESULT, 0 = success
+         */
+        int fs_closedir(uint8_t dh) {
+                dh -= _FS_LOCK + 1;
+                if(dh < _FS_LOCK) {
+                        dhandles[dh]->fs = NULL;
+                        fs_err = FR_OK;
+                } else {
+                        fs_err = FR_INVALID_PARAMETER;
+                }
+
+        }
+
+        int fs_readdir(uint8_t fd, DIRINFO *data) {
+                uint8_t rc;
+#ifdef __AVR__
+                fss_r8 *reply;
+
+                fss_opfd message = {
+                        PIPE_READ,
+                        fd
+                };
+                xmem::memory_send((uint8_t *) & message, sizeof (fss_opfd), &to_usb_fs_task);
+                xmem::memory_recv((uint8_t**) & reply, &from_usb_fs_task);
+                rc = reply->res; // error code
+                fs_err[xmem::getcurrentBank()] = rc; // save it here in the event we want to use it.
+                if(rc == FR_OK) {
+                        memcpy(data, &reply->dat, sizeof (DIRINFO));
+                }
+                free(reply);
+                return rc;
+#elif defined(CORE_TEENSY) && defined(__arm__)
+                fd -= _FS_LOCK + 1;
+                fs_err = FR_EOF;
+                if(fd < _FS_LOCK && dhandles[fd]->fs != NULL) {
+                        FILINFO finfo;
+#if _USE_LFN
+                        char lfn[_MAX_LFN + 1];
+                        finfo.lfsize = _MAX_LFN;
+#else
+                        char lfn[1];
+                        finfo.lfsize = 0;
+#endif
+                        finfo.lfname = lfn;
+                        rc = f_readdir(dhandles[fd], &finfo);
+                        if(rc == FR_OK) {
+                                if(finfo.fname[0]) {
+                                        fs_err = FR_OK;
+                                        data->fsize = finfo.fsize;
+                                        data->fdate = finfo.fdate;
+                                        data->ftime = finfo.ftime;
+                                        data->fattrib = finfo.fattrib;
+                                        strcpy((char *)data->fname, (char *)finfo.fname);
+                                        data->lfname[0] = 0x00;
+#if _USE_LFN
+                                        if(finfo.lfsize) {
+                                                strcat((char *)data->lfname, (char *)finfo.lfname);
+                                        }
+#endif
+                                }
+                        }
+                }
+                return fs_err;
+#endif
+        }
+
+        /**
+         * Flush all files that have pending write data to disk.
+         *
+         * @return FRESULT, 0 = success
+         */
+        uint8_t fs_sync(void) {
+                uint8_t rc;
+#ifdef __AVR__
+                fss_r8 *reply;
+                uint8_t message;
+                message = PIPE_SYNC;
+                xmem::memory_send(&message, 1U, &to_usb_fs_task);
+                xmem::memory_recv((uint8_t**) & reply, &from_usb_fs_task);
+                rc = reply->res; // error code
+                fs_err[xmem::getcurrentBank()] = rc; // save it here in the event we want to use it.
+                free(reply);
+#elif defined(CORE_TEENSY) && defined(__arm__)
+
+                USB_ISR_PROTECTED_CALL() {
+                        for(int i = 0; i < _FS_LOCK; i++) {
+                                if(fhandles[i]->fs != NULL) {
+                                        f_sync(fhandles[i]);
+                                }
+                        }
+                        for(int i = 0; i < _VOLUMES; i++) {
+                                if(Fats[i] != NULL) {
+                                        f_sync_fs(Fats[i]->ffs);
+                                        commit_fs(Fats[i]->ffs);
+                                }
+                        }
+                        rc = FR_OK;
+                        fs_err = rc;
+                }
+#endif
+                return rc;
+        }
+
+        /**
+         * Flush pending writes to disk for a specific file.
+         *
+         * @param fd file handle
+         * @return FRESULT, 0 = success
+         */
+        uint8_t fs_flush(uint8_t fd) {
+                uint8_t rc;
+#ifdef __AVR__
+                fss_opfd message = {
+                        PIPE_FLUSH,
+                        fd
+                };
+                fss_r8 *reply;
+
+                xmem::memory_send((uint8_t *) & message, sizeof (fss_opfd), &to_usb_fs_task);
+                xmem::memory_recv((uint8_t**) & reply, &from_usb_fs_task);
+                rc = reply->res; // error code
+                fs_err[xmem::getcurrentBank()] = rc; // save it here in the event we want to use it.
+                free(reply);
+#elif defined(CORE_TEENSY) && defined(__arm__)
+
+                fd--;
+
+                USB_ISR_PROTECTED_CALL() {
+                        rc = FR_INVALID_PARAMETER;
+                        if(fd < _FS_LOCK && fhandles[fd]->fs != NULL) {
+                                rc = FR_OK;
+                                f_sync(fhandles[fd]);
+                        }
+                        fs_err = rc;
+                }
+#endif
+                return rc;
+        }
+
+        /**
+         * Check to see if we are at the end of the file.
+         *
+         * @param fd file handle
+         * @return 0 = not eof, 1 = eof
+         */
+        uint8_t fs_eof(uint8_t fd) {
+                uint8_t rc;
+#ifdef __AVR__
+                fss_r8 *reply;
+                fss_opfd message = {
+                        PIPE_EOF,
+                        fd
+                };
+                xmem::memory_send((uint8_t *) & message, sizeof (fss_opfd), &to_usb_fs_task);
+                xmem::memory_recv((uint8_t**) & reply, &from_usb_fs_task);
+                rc = reply->res; // error code
+                fs_err[xmem::getcurrentBank()] = rc; // save it here in the event we want to use it.
+                free(reply);
+#elif defined(CORE_TEENSY) && defined(__arm__)
+
+                fd--;
+
+                USB_ISR_PROTECTED_CALL() {
+                        rc = FR_INVALID_PARAMETER;
+                        if(fd < _FS_LOCK && fhandles[fd]->fs != NULL) {
+                                rc = f_eof(fhandles[fd]);
+                        }
+                        fs_err = rc;
+                }
+#endif
+                return rc;
+        }
+
+        /**
+         * Truncate file to current position.
+         *
+         * @param fd file handle
+         * @return FRESULT, 0 = success
+         */
+        uint8_t fs_truncate(uint8_t fd) {
+                uint8_t rc;
+#ifdef __AVR__
+                fss_r8 *reply;
+                fss_opfd message = {
+                        PIPE_TRUNC,
+                        fd
+                };
+                xmem::memory_send((uint8_t *) & message, sizeof (fss_opfd), &to_usb_fs_task);
+                xmem::memory_recv((uint8_t**) & reply, &from_usb_fs_task);
+                rc = reply->res; // error code
+                fs_err[xmem::getcurrentBank()] = rc; // save it here in the event we want to use it.
+                free(reply);
+#elif defined(CORE_TEENSY) && defined(__arm__)
+
+                fd--;
+
+                USB_ISR_PROTECTED_CALL() {
+                        rc = FR_INVALID_PARAMETER;
+                        if(fd < _FS_LOCK && fhandles[fd]->fs != NULL) {
+                                rc = f_truncate(fhandles[fd]);
+                        }
+                        fs_err = rc;
+
+                }
+#endif
+                return rc;
+        }
+
+        /**
+         * Get current position in file
+         *
+         * @param fd file handle
+         * @return current position in file, 0xfffffffflu == error
+         */
+        unsigned long fs_tell(uint8_t fd) {
+                uint8_t rc;
+                unsigned long offset = 0xfffffffflu;
+#ifdef __AVR__
+                fss_r8 *reply;
+                uint8_t *ptr;
+                fss_opfd message = {
+                        PIPE_TELL,
+                        fd
+                };
+                xmem::memory_send((uint8_t *) & message, sizeof (fss_opfd), &to_usb_fs_task);
+                xmem::memory_recv((uint8_t**) & reply, &from_usb_fs_task);
+                rc = reply->res; // error code
+                fs_err[xmem::getcurrentBank()] = rc; // save it here in the event we want to use it.
+                if(!rc) {
+                        ptr = &reply->dat;
+                        uint32_t *o_p = (uint32_t *)ptr;
+                        offset = *o_p;
+                }
+                free(reply);
+#elif defined(CORE_TEENSY) && defined(__arm__)
+
+                fd--;
+
+                USB_ISR_PROTECTED_CALL() {
+                        rc = FR_INVALID_PARAMETER;
+                        if(fd < _FS_LOCK && fhandles[fd]->fs != NULL) {
+                                rc = FR_OK;
+                                // f_tell is a macro...
+                                offset = f_tell(fhandles[fd]);
+                        }
+                        fs_err = rc;
+
+                }
+#endif
+                return offset;
+        }
+
+        /**
+         * Seek to position in file.
+         *      SEEK_SET The offset is set to offset bytes.
+         *      SEEK_CUR The offset is set to its current location plus offset bytes.
+         *      SEEK_END The offset is set to the size of the file plus offset bytes.
+         *
+         * @param fd file handle
+         * @param offset
+         * @param whence one of SEEK_SET, SEEK_CUR, SEEK_END
+         * @return FRESULT, 0 = success
+         */
+        uint8_t fs_lseek(uint8_t fd, unsigned long offset, int whence) {
+                uint8_t rc;
+#ifdef __AVR__
+                fss_r8 *reply;
+
+                fss_opfd32dat message = {
+                        PIPE_LSEEK,
+                        fd,
+                        offset,
+                        whence
+                };
+
+                xmem::memory_send((uint8_t *) & message, sizeof (fss_opfd32dat), &to_usb_fs_task);
+                xmem::memory_recv((uint8_t**) & reply, &from_usb_fs_task);
+                rc = reply->res; // error code
+                fs_err[xmem::getcurrentBank()] = rc; // save it here in the event we want to use it.
+                free(reply);
+#elif defined(CORE_TEENSY) && defined(__arm__)
+
+                fd--;
+
+                USB_ISR_PROTECTED_CALL() {
+                        rc = FR_INVALID_PARAMETER;
+                        if(fd < _FS_LOCK && fhandles[fd]->fs != NULL) {
+                                rc = f_clseek(fhandles[fd], offset, whence);
+                        }
+                        fs_err = rc;
+                }
+#endif
+                return rc;
+        }
+
+        /**
+         * Read from file
+         *
+         * @param fd file handle
+         * @param data pointer to a buffer large enough to hold requested amount
+         * @param amount
+         * @return amount actually read in, less than 0 is an error
+         */
+        int fs_read(uint8_t fd, void *data, uint16_t amount) {
+                uint8_t rc;
+                int count = 0;
+#ifdef __AVR__
+                uint8_t *ptr;
+                fss_r8 *reply;
+                fss_opfd16 message = {
+                        PIPE_READ,
+                        fd,
+                        amount
+                };
+                xmem::memory_send((uint8_t *) & message, sizeof (fss_opfd16), &to_usb_fs_task);
+                xmem::memory_recv((uint8_t**) & reply, &from_usb_fs_task);
+                rc = reply->res; // error code
+                fs_err[xmem::getcurrentBank()] = rc; // save it here in the event we want to use it.
+                if(rc == FR_EOF || rc == FR_OK) {
+                        ptr = &reply->dat;
+                        uint16_t *r_p = (uint16_t *)ptr;
+                        count = *r_p;
+                        ptr += sizeof (uint16_t);
+                        memcpy(data, ptr, count);
+                }
+                if(rc) {
+                        if(!count) count = -1;
+                }
+                free(reply);
+#elif defined(CORE_TEENSY) && defined(__arm__)
+
+                fd--;
+
+                USB_ISR_PROTECTED_CALL() {
+                        rc = FR_INVALID_PARAMETER;
+                        if((fd < _VOLUMES) && (fhandles[fd]->fs != NULL)) {
+                                UINT bc;
+                                rc = f_read(fhandles[fd], data, amount, &bc);
+                                if(bc != amount) rc = FR_EOF;
+                                count = bc;
+                                if(rc) {
+                                        if(!count) count = -1;
+                                }
+                        }
+                        fs_err = rc;
+
+                }
+#endif
+                return count;
+        }
+
+        /**
+         * Write to file
+         *
+         * @param fd file handle
+         * @param data pointer to a buffer
+         * @param amount
+         * @return amount of data actually written, less than 0 is an error.
+         */
+        int fs_write(uint8_t fd, const void *data, uint16_t amount) {
+                uint8_t rc;
+                int count = 0;
+#ifdef __AVR__
+                fss_r8 *reply;
+                uint16_t *w_p;
+
+                fss_opfd16 *message;
+                uint16_t ltr = sizeof (fss_opfd16) + amount;
+                message = (fss_opfd16 *)xmem::safe_malloc(ltr);
+                message->op = PIPE_WRITE;
+                message->fd = fd;
+                message->amount = amount;
+                memcpy(&(message->data), data, amount);
+
+                xmem::memory_send((uint8_t *)message, ltr, &to_usb_fs_task);
+                free(message);
+                xmem::memory_recv((uint8_t**) & reply, &from_usb_fs_task);
+                rc = reply->res; // error code
+                fs_err[xmem::getcurrentBank()] = rc; // save it here in the event we want to use it.
+                w_p = (uint16_t *) & reply->dat;
+                count = *w_p;
+                if(rc) {
+                        if(!count) count = -1;
+                }
+                free(reply);
+#elif defined(CORE_TEENSY) && defined(__arm__)
+                fd--;
+
+                USB_ISR_PROTECTED_CALL() {
+                        rc = FR_INVALID_PARAMETER;
+                        if((fd < _VOLUMES) && (fhandles[fd]->fs != NULL)) {
+                                UINT bc;
+                                rc = f_write(fhandles[fd], data, amount, &bc);
+                                count = bc;
+                                if(rc) {
+                                        if(!count) count = -1;
+                                }
+                        }
+                        fs_err = rc;
+
+
+                }
+#endif
+                return count;
+        }
+
+        /**
+         * Remove (delete) file or directory. An absolute, fully resolved canonical path is required!
+         * Relative paths and links are _not_ supported.
+         *
+         * @param path
+         * @return FRESULT, 0 = success
+         */
+        uint8_t fs_unlink(const char *path) {
+
+#ifdef __AVR__
+                fss_r8 *reply;
+                fss_opdrcol *message;
+                uint16_t ltr;
+#endif
+                const char *pathtrunc;
+                uint8_t vol = _fs_util_vol(path);
+                uint8_t rc;
+
+                if(vol == _VOLUMES) {
+                        rc = FR_NO_PATH;
+                } else {
+                        pathtrunc = _fs_util_trunkpath(path, vol);
+#ifdef __AVR__
+                        {
+                                ltr = strlen(pathtrunc) + sizeof (fss_opdrcol);
+
+                                message = (fss_opdrcol *)xmem::safe_malloc(ltr);
+
+                                message->op = PIPE_UNLINK;
+                                message->drive = '0' + vol;
+                                message->colon = ':';
+                                strcpy((char *)&message->path, pathtrunc);
+                                xmem::memory_send((uint8_t*)message, ltr, &to_usb_fs_task);
+                                free(message);
+                                xmem::memory_recv((uint8_t**) & reply, &from_usb_fs_task);
+                                rc = reply->res; // error code
+                                free(reply);
+                        }
+                }
+                fs_err[xmem::getcurrentBank()] = rc; // save it here in the event we want to use it.
+#elif defined(CORE_TEENSY) && defined(__arm__)
+
+                        USB_ISR_PROTECTED_CALL() {
+                                const char *name = _fs_util_FATpath(pathtrunc, vol);
+                                rc = f_unlink(name);
+                                free((void *)name);
+                        }
+
+                }
+                fs_err = rc;
+#endif
+
+                return rc;
+        }
+
+        /**
+         * Change attribute flags on a file.
+         *
+         * @param path file or directory
+         * @param mode AM_RDO|AM_ARC|AM_SYS|AM_HID in any combination
+         * @return FRESULT, 0 = success
+         */
+        uint8_t fs_chmod(const char *path, uint8_t mode) {
+#ifdef __AVR__
+                fss_r8 *reply;
+#endif
+                uint8_t rc;
+                const char *pathtrunc;
+                uint8_t vol = _fs_util_vol(path);
+
+                if(vol == _VOLUMES) {
+#ifdef __AVR__
+                        fs_err[xmem::getcurrentBank()] = FR_NO_PATH;
+#elif defined(CORE_TEENSY) && defined(__arm__)
+                        fs_err = rc;
+#endif
+                        return FR_NO_PATH;
+                }
+
+
+                pathtrunc = _fs_util_trunkpath(path, vol);
+
+#ifdef __AVR__
+                uint16_t ltr = strlen(pathtrunc) + sizeof (fss_op8drcol);
+
+                fss_op8drcol *message = (fss_op8drcol *)xmem::safe_malloc(ltr);
+                message->op = PIPE_CHMOD;
+                message->mode = mode;
+                message->drive = '0' + vol;
+                message->colon = ':';
+                message->path = 0x00;
+                strcat((char *)&message->path, (char *)pathtrunc);
+
+                xmem::memory_send((uint8_t*)message, ltr, &to_usb_fs_task);
+                free(message);
+
+
+                xmem::memory_recv((uint8_t**) & reply, &from_usb_fs_task);
+                rc = reply->res; // error code
+                fs_err[xmem::getcurrentBank()] = rc; // save it here in the event we want to use it.
+                free(reply);
+#elif defined(CORE_TEENSY) && defined(__arm__)
+
+                USB_ISR_PROTECTED_CALL() {
+                        const char *name = _fs_util_FATpath(pathtrunc, vol);
+                        rc = f_chmod((TCHAR *)name, mode, AM_RDO | AM_ARC | AM_SYS | AM_HID);
+                        free((void *)name);
+                }
+                fs_err = rc;
+#endif
+                return rc;
+        }
+
+        /**
+         * Create a new directory
+         *
+         * @param path new directory
+         * @param mode AM_RDO|AM_ARC|AM_SYS|AM_HID in any combination
+         * @return FRESULT, 0 = success
+         */
+        uint8_t fs_mkdir(const char *path, uint8_t mode) {
+                uint8_t rc;
+                const char *pathtrunc;
+
+                uint8_t vol = _fs_util_vol(path);
+
+                if(vol == _VOLUMES) {
+#ifdef __AVR__
+                        fs_err[xmem::getcurrentBank()] = FR_NO_PATH;
+#elif defined(CORE_TEENSY) && defined(__arm__)
+                        fs_err = rc;
+#endif
+                        return FR_NO_PATH;
+                }
+                pathtrunc = _fs_util_trunkpath(path, vol);
+#ifdef __AVR__
+
+                fss_r8 *reply;
+                uint16_t ltr = strlen(pathtrunc) + sizeof (fss_op8drcol);
+                fss_op8drcol *message = (fss_op8drcol *)xmem::safe_malloc(ltr);
+                message->op = PIPE_MKDIR;
+                message->mode = mode;
+                message->drive = '0' + vol;
+                message->colon = ':';
+                message->path = 0x00;
+                strcat((char *)&message->path, (char *)pathtrunc);
+
+                xmem::memory_send((uint8_t*)message, ltr, &to_usb_fs_task);
+                free(message);
+                xmem::memory_recv((uint8_t**) & reply, &from_usb_fs_task);
+                rc = reply->res; // error code
+                fs_err[xmem::getcurrentBank()] = rc; // save it here in the event we want to use it.
+                free(reply);
+#elif defined(CORE_TEENSY) && defined(__arm__)
+
+                USB_ISR_PROTECTED_CALL() {
+                        const char *name = _fs_util_FATpath(pathtrunc, vol);
+                        rc = f_mkdir((TCHAR *)name);
+                        if((rc == FR_OK) && mode) {
+                                rc = f_chmod((TCHAR *)name, mode, AM_RDO | AM_ARC | AM_SYS | AM_HID);
+                        }
+                        free((void *)name);
+                }
+#endif
+                return rc;
+        }
+
+        /**
+         * Modify file time stamp.
+         *
+         * @param path File to update time stamp
+         * @param timesec time in seconds since 1/1/1900
+         * @return FRESULT, 0 = success
+         */
+        uint8_t fs_utime(const char *path, time_t timesec) {
+                uint8_t rc;
+                const char *pathtrunc;
+                uint8_t vol = _fs_util_vol(path);
+
+                if(vol == _VOLUMES) {
+#ifdef __AVR__
+                        fs_err[xmem::getcurrentBank()] = FR_NO_PATH;
+#elif defined(CORE_TEENSY) && defined(__arm__)
+                        fs_err = rc;
+#endif
+                        return FR_NO_PATH;
+                }
+
+                pathtrunc = _fs_util_trunkpath(path, vol);
+#ifdef __AVR__
+                fss_r8 *reply;
+
+
+                uint16_t ltr = strlen(pathtrunc) + sizeof (fss_op32drcol);
+
+                fss_op32drcol *message = (fss_op32drcol *)xmem::safe_malloc(ltr);
+                message->op = PIPE_UTIME;
+                message->data = DateTime(timesec).FatPacked();
+                message->drive = '0' + vol;
+                message->colon = ':';
+                message->path = 0x00;
+                strcat((char *)&message->path, (char *)pathtrunc);
+
+                xmem::memory_send((uint8_t*)message, ltr, &to_usb_fs_task);
+                free(message);
+
+                xmem::memory_recv((uint8_t**) & reply, &from_usb_fs_task);
+                rc = reply->res; // error code
+                fs_err[xmem::getcurrentBank()] = rc; // save it here in the event we want to use it.
+                free(reply);
+#elif defined(CORE_TEENSY) && defined(__arm__)
+
+                USB_ISR_PROTECTED_CALL() {
+                        const char *name = _fs_util_FATpath(pathtrunc, vol);
+                        FILINFO finfo;
+                        finfo.fdate = timesec;
+                        rc = f_utime((TCHAR *)name, &finfo);
+                        free((void *)name);
+                }
+                fs_err = rc;
+#endif
+                return rc;
+
+        }
+
+        /**
+         * Return information about a file.
+         *
+         * @param path File to return information about
+         * @param buf pointer to FILINFO structure, which is filled in upon success.
+         * @return FRESULT, 0 = success
+         */
+        uint8_t fs_stat(const char *path, FILINFO *buf) {
+                uint8_t rc;
+                const char *pathtrunc;
+                uint8_t vol = _fs_util_vol(path);
+                if(vol == _VOLUMES) {
+#ifdef __AVR__
+                        fs_err[xmem::getcurrentBank()] = FR_NO_PATH;
+#elif defined(CORE_TEENSY) && defined(__arm__)
+                        fs_err = rc;
+#endif
+                        return FR_NO_PATH;
+                }
+
+                pathtrunc = _fs_util_trunkpath(path, vol);
+#ifdef __AVR__
+                fss_r8 *reply;
+
+                uint16_t ltr = strlen(pathtrunc) + sizeof (fss_opdrcol);
+                fss_opdrcol *message = (fss_opdrcol *)xmem::safe_malloc(ltr);
+
+                message->op = PIPE_STAT;
+                message->drive = '0' + vol;
+                message->colon = ':';
+                message->path = 0x00;
+                strcat((char *)&message->path, pathtrunc);
+
+                xmem::memory_send((uint8_t*)message, ltr, &to_usb_fs_task);
+                free(message);
+                xmem::memory_recv((uint8_t**) & reply, &from_usb_fs_task);
+                rc = reply->res; // error code
+                fs_err[xmem::getcurrentBank()] = rc; // save it here in the event we want to use it.
+                if(!rc) {
+                        memcpy(buf, &reply->dat, sizeof (FILINFO));
+                }
+                free(reply);
+#elif defined(CORE_TEENSY) && defined(__arm__)
+
+                USB_ISR_PROTECTED_CALL() {
+                        const char *name = _fs_util_FATpath(pathtrunc, vol);
+                        rc = f_stat((TCHAR *)name, buf);
+                        free((void *)name);
+                }
+                fs_err = rc;
+#endif
+                return rc;
+        }
+
+        /**
+         * Rename a file, moving it between directories if required.
+         * Does not move a file between mounted volumes.
+         *
+         * @param oldpath old file name
+         * @param newpath new file name
+         * @return FRESULT, 0 = success
+         */
+        uint8_t fs_rename(const char *oldpath, const char *newpath) {
+                uint8_t rc;
+
+                uint8_t vol = _fs_util_vol(oldpath);
+                if(vol == _VOLUMES) {
+#ifdef __AVR__
+                        fs_err[xmem::getcurrentBank()] = FR_NO_PATH;
+#elif defined(CORE_TEENSY) && defined(__arm__)
+                        fs_err = rc;
+#endif
+                        return FR_NO_PATH;
+                }
+                if(vol != _fs_util_vol(newpath)) {
+#ifdef __AVR__
+                        fs_err[xmem::getcurrentBank()] = FR_NO_PATH;
+#elif defined(CORE_TEENSY) && defined(__arm__)
+                        fs_err = rc;
+#endif
+                        return FR_NO_PATH;
+                }
+
+                const char *oldpathtrunc = _fs_util_trunkpath(oldpath, vol);
+                const char *newpathtrunc = _fs_util_trunkpath(newpath, vol);
+
+#ifdef __AVR__
+                uint8_t *ptr;
+                fss_r8 *reply;
+
+                uint16_t ltr = strlen(oldpathtrunc) + strlen(newpathtrunc) + sizeof (fss_opdrcol) + 1;
+
+                fss_opdrcol *message = (fss_opdrcol *)xmem::safe_malloc(ltr);
+                message->op = PIPE_RENAME;
+                message->drive = '0' + vol;
+                message->colon = ':';
+                message->path = 0x00;
+                ptr = &(message->path);
+
+                strcat((char *)ptr, (char *)oldpathtrunc);
+                ptr += strlen(oldpathtrunc) + 1;
+                *ptr = 0x00;
+                strcat((char *)ptr, (char *)newpathtrunc);
+                xmem::memory_send((uint8_t*)message, ltr, &to_usb_fs_task);
+                free(message);
+                xmem::memory_recv((uint8_t**) & reply, &from_usb_fs_task);
+                rc = reply->res; // error code
+                fs_err[xmem::getcurrentBank()] = rc; // save it here in the event we want to use it.
+                free(reply);
+#elif defined(CORE_TEENSY) && defined(__arm__)
+
+                USB_ISR_PROTECTED_CALL() {
+                        const char *oldname = _fs_util_FATpath(oldpathtrunc, vol);
+                        //const char *newname = _fs_util_FATpath(newpathtrunc, vol);
+
+                        rc = f_rename(oldname, newpathtrunc);
+                        //free((void *)newname);
+                        free((void *)oldname);
+                }
+                fs_err = rc;
+
+#endif
+                return rc;
+        }
+
+        /**
+         * Get free space available on mount point.
+         *
+         * @param path mount point
+         * @return free space available in bytes. If there is no volume or write protected, returns zero (full).
+         */
+        uint64_t fs_getfree(const char *path) {
+                uint8_t rc;
+                uint8_t vol = _fs_util_vol(path);
+                uint64_t rv = 0llu;
+                if(vol == _VOLUMES) {
+#ifdef __AVR__
+                        fs_err[xmem::getcurrentBank()] = FR_NO_PATH;
+#elif defined(CORE_TEENSY) && defined(__arm__)
+                        fs_err = rc;
+#endif
+                        return FR_NO_PATH;
+                } else {
+#ifdef __AVR__
+                        uint8_t *ptr;
+                        fss_r8 *reply;
+                        uint64_t *q;
+                        fss_opdrcol message = {
+                                PIPE_FREE,
+                                '0' + vol,
+                                ':',
+                                0x00
+                        };
+
+                        xmem::memory_send((uint8_t*) & message, sizeof (fss_opdrcol), &to_usb_fs_task);
+
+                        xmem::memory_recv((uint8_t**) & reply, &from_usb_fs_task);
+                        rc = reply->res; // error code
+                        fs_err[xmem::getcurrentBank()] = rc; // save it here in the event we want to use it.
+                        if(!rc) {
+                                ptr++;
+                                q = (uint64_t *) & reply->dat;
+                                rv = *q;
+                        }
+                        free(reply);
+                }
+#elif defined(CORE_TEENSY) && defined(__arm__)
+
+                        USB_ISR_PROTECTED_CALL() {
+                                FATFS *fs;
+                                uint32_t tv;
+                                const char *name = _fs_util_FATpath("", vol);
+                                rc = f_getfree((TCHAR *)name, &tv, &fs);
+                                free((void *)name);
+                                rv = tv; // blocks
+                                rv *= fs->csize; // sectors in each block
+                                rv *= fs->pfat->storage->SectorSize; // bytes in each sector
+                                if(rc) rv = 0llu;
+                        }
+                }
+                fs_err = rc;
+#endif
+                return (uint64_t)rv;
+        }
+
+        char *fs_mount_lbl(uint8_t vol) {
+                uint8_t rc;
+                char *lbl = NULL;
+#ifdef __AVR__
+                fss_r8 *reply;
+                fss_opfd message = {
+                        PIPE_MOUNT_LBL,
+                        vol
+                };
+                xmem::memory_send((uint8_t *) & message, sizeof (fss_opfd), &to_usb_fs_task);
+                xmem::memory_recv((uint8_t**) & reply, &from_usb_fs_task);
+                rc = reply->res; // error code
+                fs_err[xmem::getcurrentBank()] = rc; // save it here in the event we want to use it.
+                if(!rc) {
+                        char *rlbl = (char *)&reply->dat;
+                        lbl = (char *)xmem::safe_malloc(1 + strlen(rlbl));
+                        //*lbl = 0x00;
+                        strcpy(lbl, rlbl);
+                }
+                free(reply);
+#elif defined(CORE_TEENSY) && defined(__arm__)
+
+                USB_ISR_PROTECTED_CALL() {
+                        rc = FR_NO_PATH;
+                        if(Fats[vol]) {
+                                rc = FR_OK;
+                                lbl = (char *)malloc(1 + strlen((char *)(Fats[vol]->label)));
+                                strcpy(lbl, (char *)(Fats[vol]->label));
+                        }
+                }
+                fs_err = rc;
+#endif
+                return lbl;
+        }
+
+        uint8_t fs_mountcount(void) {
+#ifdef __AVR__
+                uint8_t rc;
+                uint8_t message = PIPE_MOUNT_CNT;
+                fss_r8 *reply;
+                xmem::memory_send(&message, 1U, &to_usb_fs_task);
+                xmem::memory_recv((uint8_t**) & reply, &from_usb_fs_task);
+                rc = reply->res; // error code
+                fs_err[xmem::getcurrentBank()] = rc; // save it here in the event we want to use it.
+                message = reply->dat;
+                free(reply);
+#elif defined(CORE_TEENSY) && defined(__arm__)
+                uint8_t message = 0;
+
+                USB_ISR_PROTECTED_CALL() {
+                        fs_err = FR_OK;
+                        for(uint8_t x = 0; x < _VOLUMES; x++) {
+                                if(Fats[x]) {
+                                        message++;
+                                }
+                        }
+                }
+#endif
+                return message;
+        }
+}
