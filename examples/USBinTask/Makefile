@@ -12,8 +12,8 @@ EXTRA_FLAGS += -D USE_MULTIPLE_APP_API=16
 EXTRA_FLAGS += -D USB_HOST_SERIAL=Serial1
 EXTRA_FLAGS += -DLCD_USING_SPI=1 
 # ... and uncomment the correct board...
-#BOARD = teensy3.0
-#BOARD = teensy3.1
+#BOARD = teensy30
+#BOARD = teensy31
 
 # ... then set your Arduino PROGRAMMING port here
 #PORT = /dev/ttyUSB0
