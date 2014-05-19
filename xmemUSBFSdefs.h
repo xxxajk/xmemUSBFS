@@ -9,13 +9,12 @@
 #define	XMEMUSBFSDEFS_H
 
 #include <FAT/FatFS/src/ff.h>
-#ifndef USE_MULTIPLE_APP_API
-#define USE_MULTIPLE_APP_API 16
-#endif
+//#include <xmemUSB.h>
+#include <xmem.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
-#ifdef __AVR__
+#ifdef XMEM_MULTIPLE_APP
 // per-task fs error code
 extern uint8_t fs_err[USE_MULTIPLE_APP_API];
 #else
@@ -60,4 +59,3 @@ uint8_t fs_mountcount(void);
 }
 #endif
 #endif	/* XMEMUSBFS_H */
-

@@ -14,7 +14,7 @@
 #include <xmemUSBFS.h>
 #include <xmemUSB.h>
 
-#ifdef __AVR__
+#ifdef XMEM_MULTIPLE_APP
 // flush, eof, truncate, tell, close
 
 typedef struct {
@@ -148,7 +148,7 @@ typedef struct {
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
-#ifdef __AVR__
+#ifdef XMEM_MULTIPLE_APP
 // fs errno...
 uint8_t fs_err[USE_MULTIPLE_APP_API];
 // NOTE: memory stream transaction pipes must be on the AVR RAM, therefore, global
@@ -182,7 +182,7 @@ namespace GenericFileSystem {
          * @return 1 for success
          */
         int Setup(void) {
-#ifdef __AVR__
+#ifdef XMEM_MULTIPLE_APP
                 // initialize memory transaction pipes
                 xmem::memory_init(&to_usb_fs_task);
                 xmem::memory_init(&from_usb_fs_task);
@@ -190,7 +190,7 @@ namespace GenericFileSystem {
                 return 1;
         }
 
-#ifdef __AVR__
+#ifdef XMEM_MULTIPLE_APP
 
         /**
          * Called from USB polling task. Warning: Huge ugly block of code!
@@ -768,7 +768,7 @@ namespace GenericFileSystem {
                                 }
                         }
                 }
-#ifdef __AVR__
+#ifdef XMEM_MULTIPLE_APP
                 return (process_fs_pipe());
 #endif
         }
@@ -867,15 +867,15 @@ extern "C" {
                 uint8_t vol = _VOLUMES;
 
                 if((strlen(path) < 1) || *path != '/' || strstr(path, "/./") || strstr(path, "/../") || strstr(path, "//")) {
-#ifdef __AVR__
+#ifdef XMEM_MULTIPLE_APP
                         fs_err[xmem::getcurrentBank()] = FR_INVALID_NAME;
-#elif defined(CORE_TEENSY) && defined(__arm__)
+#else
                         fs_err = FR_INVALID_NAME;
 #endif
                 } else {
-#ifdef __AVR__
+#ifdef XMEM_MULTIPLE_APP
                         fname = (char *)xmem::safe_malloc(strlen(path) + 1);
-#elif defined(CORE_TEENSY) && defined(__arm__)
+#else
                         fname = (char *)malloc(strlen(path) + 1);
 #endif
                         *fname = 0x00;
@@ -901,8 +901,7 @@ extern "C" {
                 }
                 return vol;
         }
-
-#if defined(CORE_TEENSY) && defined(__arm__)
+#ifndef XMEM_MULTIPLE_APP
 
         /**
          * Return a pointer to path name suitable for FATfs
@@ -934,11 +933,11 @@ extern "C" {
          */
         uint8_t fs_ready(const char *path) {
                 // path -> volume number
-#ifdef __AVR__
+#ifdef XMEM_MULTIPLE_APP
                 fss_r8 *reply;
 #endif
                 uint8_t vol;
-#ifdef __AVR__
+#ifdef XMEM_MULTIPLE_APP
                 uint8_t rc;
                 uint16_t ltr = strlen(path) + 2;
                 fss_opfd *message = (fss_opfd *)xmem::safe_malloc(ltr);
@@ -955,7 +954,7 @@ extern "C" {
                 if(rc) {
                         return _VOLUMES; // error
                 }
-#elif defined(CORE_TEENSY) && defined(__arm__)
+#else
 
                 USB_ISR_PROTECTED_CALL() {
                         vol = _VOLUMES;
@@ -979,7 +978,7 @@ extern "C" {
                 uint8_t fd;
                 uint8_t rc;
                 const char *pathtrunc;
-#ifdef __AVR__
+#ifdef XMEM_MULTIPLE_APP
                 uint8_t *ptr;
                 fss_r8 *reply;
                 char *message;
@@ -987,9 +986,9 @@ extern "C" {
                 uint8_t vol = _fs_util_vol(path);
 
                 if(vol == _VOLUMES) {
-#ifdef __AVR__
+#ifdef XMEM_MULTIPLE_APP
                         fs_err[xmem::getcurrentBank()] = FR_NO_PATH;
-#elif defined(CORE_TEENSY) && defined(__arm__)
+#else
                         fs_err = FR_NO_PATH;
 #endif
                         return 0;
@@ -997,7 +996,7 @@ extern "C" {
 
 
                 pathtrunc = _fs_util_trunkpath(path, vol);
-#ifdef __AVR__
+#ifdef XMEM_MULTIPLE_APP
                 uint16_t ltr = strlen(pathtrunc) + 5;
                 message = (char *)xmem::safe_malloc(ltr);
                 ptr = (uint8_t *)message;
@@ -1022,7 +1021,7 @@ extern "C" {
                 if(rc) {
                         return 0; // error
                 }
-#elif defined(CORE_TEENSY) && defined(__arm__)
+#else
                 fd = 0;
                 int i;
 
@@ -1055,7 +1054,7 @@ extern "C" {
          * @return returns file handle number, or 0 on error
          */
         uint8_t fs_open(const char *path, const char *mode) {
-#ifdef __AVR__
+#ifdef XMEM_MULTIPLE_APP
 
                 fss_r8 *reply;
 #endif
@@ -1066,16 +1065,16 @@ extern "C" {
                 uint8_t vol = _fs_util_vol(path);
 
                 if(vol == _VOLUMES) {
-#ifdef __AVR__
+#ifdef XMEM_MULTIPLE_APP
                         fs_err[xmem::getcurrentBank()] = FR_NO_PATH;
-#elif defined(CORE_TEENSY) && defined(__arm__)
+#else
                         fs_err = FR_NO_PATH;
 #endif
                         return 0;
                 }
 
                 pathtrunc = _fs_util_trunkpath(path, vol);
-#ifdef __AVR__
+#ifdef XMEM_MULTIPLE_APP
 
                 uint16_t lpt = strlen(pathtrunc) + sizeof (fss_op88drcol);
                 fss_op88drcol *message = (fss_op88drcol *)xmem::safe_malloc(lpt);
@@ -1098,7 +1097,7 @@ extern "C" {
                 if(rc) {
                         return 0; // error
                 }
-#elif defined(CORE_TEENSY) && defined(__arm__)
+#else
 
                 fd = 0;
                 int i;
@@ -1148,7 +1147,7 @@ extern "C" {
          */
         int fs_close(uint8_t fd) {
                 uint8_t rc;
-#ifdef __AVR__
+#ifdef XMEM_MULTIPLE_APP
                 fss_r8 *reply;
                 fss_opfd message = {
                         PIPE_CLOSE,
@@ -1159,7 +1158,8 @@ extern "C" {
                 rc = reply->res; // error code
                 fs_err[xmem::getcurrentBank()] = rc; // save it here in the event we want to use it.
                 free(reply);
-#elif defined(CORE_TEENSY) && defined(__arm__)
+                return rc;
+#else
                 fd--;
 
                 USB_ISR_PROTECTED_CALL() {
@@ -1168,8 +1168,8 @@ extern "C" {
                                 fhandles[fd]->fs = NULL;
                         } else fs_err = FR_INVALID_PARAMETER;
                 }
-#endif
                 return fs_err;
+#endif
         }
 
         /**
@@ -1180,18 +1180,26 @@ extern "C" {
          */
         int fs_closedir(uint8_t dh) {
                 dh -= _FS_LOCK + 1;
+#ifdef XMEM_MULTIPLE_APP
+                if(dh < _FS_LOCK) {
+                        dhandles[dh]->fs = NULL;
+                        fs_err[xmem::getcurrentBank()] = FR_OK;
+                } else {
+                        fs_err[xmem::getcurrentBank()] = FR_INVALID_PARAMETER;
+                }
+#else
                 if(dh < _FS_LOCK) {
                         dhandles[dh]->fs = NULL;
                         fs_err = FR_OK;
                 } else {
                         fs_err = FR_INVALID_PARAMETER;
                 }
-
+#endif
         }
 
         int fs_readdir(uint8_t fd, DIRINFO *data) {
                 uint8_t rc;
-#ifdef __AVR__
+#ifdef XMEM_MULTIPLE_APP
                 fss_r8 *reply;
 
                 fss_opfd message = {
@@ -1207,7 +1215,7 @@ extern "C" {
                 }
                 free(reply);
                 return rc;
-#elif defined(CORE_TEENSY) && defined(__arm__)
+#else
                 fd -= _FS_LOCK + 1;
                 fs_err = FR_EOF;
                 if(fd < _FS_LOCK && dhandles[fd]->fs != NULL) {
@@ -1249,7 +1257,7 @@ extern "C" {
          */
         uint8_t fs_sync(void) {
                 uint8_t rc;
-#ifdef __AVR__
+#ifdef XMEM_MULTIPLE_APP
                 fss_r8 *reply;
                 uint8_t message;
                 message = PIPE_SYNC;
@@ -1258,7 +1266,7 @@ extern "C" {
                 rc = reply->res; // error code
                 fs_err[xmem::getcurrentBank()] = rc; // save it here in the event we want to use it.
                 free(reply);
-#elif defined(CORE_TEENSY) && defined(__arm__)
+#else
 
                 USB_ISR_PROTECTED_CALL() {
                         for(int i = 0; i < _FS_LOCK; i++) {
@@ -1287,7 +1295,7 @@ extern "C" {
          */
         uint8_t fs_flush(uint8_t fd) {
                 uint8_t rc;
-#ifdef __AVR__
+#ifdef XMEM_MULTIPLE_APP
                 fss_opfd message = {
                         PIPE_FLUSH,
                         fd
@@ -1299,10 +1307,8 @@ extern "C" {
                 rc = reply->res; // error code
                 fs_err[xmem::getcurrentBank()] = rc; // save it here in the event we want to use it.
                 free(reply);
-#elif defined(CORE_TEENSY) && defined(__arm__)
-
+#else
                 fd--;
-
                 USB_ISR_PROTECTED_CALL() {
                         rc = FR_INVALID_PARAMETER;
                         if(fd < _FS_LOCK && fhandles[fd]->fs != NULL) {
@@ -1323,7 +1329,7 @@ extern "C" {
          */
         uint8_t fs_eof(uint8_t fd) {
                 uint8_t rc;
-#ifdef __AVR__
+#ifdef XMEM_MULTIPLE_APP
                 fss_r8 *reply;
                 fss_opfd message = {
                         PIPE_EOF,
@@ -1334,7 +1340,7 @@ extern "C" {
                 rc = reply->res; // error code
                 fs_err[xmem::getcurrentBank()] = rc; // save it here in the event we want to use it.
                 free(reply);
-#elif defined(CORE_TEENSY) && defined(__arm__)
+#else
 
                 fd--;
 
@@ -1357,7 +1363,7 @@ extern "C" {
          */
         uint8_t fs_truncate(uint8_t fd) {
                 uint8_t rc;
-#ifdef __AVR__
+#ifdef XMEM_MULTIPLE_APP
                 fss_r8 *reply;
                 fss_opfd message = {
                         PIPE_TRUNC,
@@ -1368,7 +1374,7 @@ extern "C" {
                 rc = reply->res; // error code
                 fs_err[xmem::getcurrentBank()] = rc; // save it here in the event we want to use it.
                 free(reply);
-#elif defined(CORE_TEENSY) && defined(__arm__)
+#else
 
                 fd--;
 
@@ -1393,7 +1399,7 @@ extern "C" {
         unsigned long fs_tell(uint8_t fd) {
                 uint8_t rc;
                 unsigned long offset = 0xfffffffflu;
-#ifdef __AVR__
+#ifdef XMEM_MULTIPLE_APP
                 fss_r8 *reply;
                 uint8_t *ptr;
                 fss_opfd message = {
@@ -1410,7 +1416,7 @@ extern "C" {
                         offset = *o_p;
                 }
                 free(reply);
-#elif defined(CORE_TEENSY) && defined(__arm__)
+#else
 
                 fd--;
 
@@ -1441,7 +1447,7 @@ extern "C" {
          */
         uint8_t fs_lseek(uint8_t fd, unsigned long offset, int whence) {
                 uint8_t rc;
-#ifdef __AVR__
+#ifdef XMEM_MULTIPLE_APP
                 fss_r8 *reply;
 
                 fss_opfd32dat message = {
@@ -1456,7 +1462,7 @@ extern "C" {
                 rc = reply->res; // error code
                 fs_err[xmem::getcurrentBank()] = rc; // save it here in the event we want to use it.
                 free(reply);
-#elif defined(CORE_TEENSY) && defined(__arm__)
+#else
 
                 fd--;
 
@@ -1482,7 +1488,7 @@ extern "C" {
         int fs_read(uint8_t fd, void *data, uint16_t amount) {
                 uint8_t rc;
                 int count = 0;
-#ifdef __AVR__
+#ifdef XMEM_MULTIPLE_APP
                 uint8_t *ptr;
                 fss_r8 *reply;
                 fss_opfd16 message = {
@@ -1505,7 +1511,7 @@ extern "C" {
                         if(!count) count = -1;
                 }
                 free(reply);
-#elif defined(CORE_TEENSY) && defined(__arm__)
+#else
 
                 fd--;
 
@@ -1538,7 +1544,7 @@ extern "C" {
         int fs_write(uint8_t fd, const void *data, uint16_t amount) {
                 uint8_t rc;
                 int count = 0;
-#ifdef __AVR__
+#ifdef XMEM_MULTIPLE_APP
                 fss_r8 *reply;
                 uint16_t *w_p;
 
@@ -1561,7 +1567,7 @@ extern "C" {
                         if(!count) count = -1;
                 }
                 free(reply);
-#elif defined(CORE_TEENSY) && defined(__arm__)
+#else
                 fd--;
 
                 USB_ISR_PROTECTED_CALL() {
@@ -1591,7 +1597,7 @@ extern "C" {
          */
         uint8_t fs_unlink(const char *path) {
 
-#ifdef __AVR__
+#ifdef XMEM_MULTIPLE_APP
                 fss_r8 *reply;
                 fss_opdrcol *message;
                 uint16_t ltr;
@@ -1604,7 +1610,7 @@ extern "C" {
                         rc = FR_NO_PATH;
                 } else {
                         pathtrunc = _fs_util_trunkpath(path, vol);
-#ifdef __AVR__
+#ifdef XMEM_MULTIPLE_APP
                         {
                                 ltr = strlen(pathtrunc) + sizeof (fss_opdrcol);
 
@@ -1622,7 +1628,7 @@ extern "C" {
                         }
                 }
                 fs_err[xmem::getcurrentBank()] = rc; // save it here in the event we want to use it.
-#elif defined(CORE_TEENSY) && defined(__arm__)
+#else
 
                         USB_ISR_PROTECTED_CALL() {
                                 const char *name = _fs_util_FATpath(pathtrunc, vol);
@@ -1645,7 +1651,7 @@ extern "C" {
          * @return FRESULT, 0 = success
          */
         uint8_t fs_chmod(const char *path, uint8_t mode) {
-#ifdef __AVR__
+#ifdef XMEM_MULTIPLE_APP
                 fss_r8 *reply;
 #endif
                 uint8_t rc;
@@ -1653,9 +1659,9 @@ extern "C" {
                 uint8_t vol = _fs_util_vol(path);
 
                 if(vol == _VOLUMES) {
-#ifdef __AVR__
+#ifdef XMEM_MULTIPLE_APP
                         fs_err[xmem::getcurrentBank()] = FR_NO_PATH;
-#elif defined(CORE_TEENSY) && defined(__arm__)
+#else
                         fs_err = rc;
 #endif
                         return FR_NO_PATH;
@@ -1664,7 +1670,7 @@ extern "C" {
 
                 pathtrunc = _fs_util_trunkpath(path, vol);
 
-#ifdef __AVR__
+#ifdef XMEM_MULTIPLE_APP
                 uint16_t ltr = strlen(pathtrunc) + sizeof (fss_op8drcol);
 
                 fss_op8drcol *message = (fss_op8drcol *)xmem::safe_malloc(ltr);
@@ -1683,7 +1689,7 @@ extern "C" {
                 rc = reply->res; // error code
                 fs_err[xmem::getcurrentBank()] = rc; // save it here in the event we want to use it.
                 free(reply);
-#elif defined(CORE_TEENSY) && defined(__arm__)
+#else
 
                 USB_ISR_PROTECTED_CALL() {
                         const char *name = _fs_util_FATpath(pathtrunc, vol);
@@ -1709,15 +1715,15 @@ extern "C" {
                 uint8_t vol = _fs_util_vol(path);
 
                 if(vol == _VOLUMES) {
-#ifdef __AVR__
+#ifdef XMEM_MULTIPLE_APP
                         fs_err[xmem::getcurrentBank()] = FR_NO_PATH;
-#elif defined(CORE_TEENSY) && defined(__arm__)
+#else
                         fs_err = rc;
 #endif
                         return FR_NO_PATH;
                 }
                 pathtrunc = _fs_util_trunkpath(path, vol);
-#ifdef __AVR__
+#ifdef XMEM_MULTIPLE_APP
 
                 fss_r8 *reply;
                 uint16_t ltr = strlen(pathtrunc) + sizeof (fss_op8drcol);
@@ -1735,7 +1741,7 @@ extern "C" {
                 rc = reply->res; // error code
                 fs_err[xmem::getcurrentBank()] = rc; // save it here in the event we want to use it.
                 free(reply);
-#elif defined(CORE_TEENSY) && defined(__arm__)
+#else
 
                 USB_ISR_PROTECTED_CALL() {
                         const char *name = _fs_util_FATpath(pathtrunc, vol);
@@ -1762,16 +1768,16 @@ extern "C" {
                 uint8_t vol = _fs_util_vol(path);
 
                 if(vol == _VOLUMES) {
-#ifdef __AVR__
+#ifdef XMEM_MULTIPLE_APP
                         fs_err[xmem::getcurrentBank()] = FR_NO_PATH;
-#elif defined(CORE_TEENSY) && defined(__arm__)
+#else
                         fs_err = rc;
 #endif
                         return FR_NO_PATH;
                 }
 
                 pathtrunc = _fs_util_trunkpath(path, vol);
-#ifdef __AVR__
+#ifdef XMEM_MULTIPLE_APP
                 fss_r8 *reply;
 
 
@@ -1792,7 +1798,7 @@ extern "C" {
                 rc = reply->res; // error code
                 fs_err[xmem::getcurrentBank()] = rc; // save it here in the event we want to use it.
                 free(reply);
-#elif defined(CORE_TEENSY) && defined(__arm__)
+#else
 
                 USB_ISR_PROTECTED_CALL() {
                         const char *name = _fs_util_FATpath(pathtrunc, vol);
@@ -1819,16 +1825,16 @@ extern "C" {
                 const char *pathtrunc;
                 uint8_t vol = _fs_util_vol(path);
                 if(vol == _VOLUMES) {
-#ifdef __AVR__
+#ifdef XMEM_MULTIPLE_APP
                         fs_err[xmem::getcurrentBank()] = FR_NO_PATH;
-#elif defined(CORE_TEENSY) && defined(__arm__)
+#else
                         fs_err = rc;
 #endif
                         return FR_NO_PATH;
                 }
 
                 pathtrunc = _fs_util_trunkpath(path, vol);
-#ifdef __AVR__
+#ifdef XMEM_MULTIPLE_APP
                 fss_r8 *reply;
 
                 uint16_t ltr = strlen(pathtrunc) + sizeof (fss_opdrcol);
@@ -1849,7 +1855,7 @@ extern "C" {
                         memcpy(buf, &reply->dat, sizeof (FILINFO));
                 }
                 free(reply);
-#elif defined(CORE_TEENSY) && defined(__arm__)
+#else
 
                 USB_ISR_PROTECTED_CALL() {
                         const char *name = _fs_util_FATpath(pathtrunc, vol);
@@ -1874,17 +1880,17 @@ extern "C" {
 
                 uint8_t vol = _fs_util_vol(oldpath);
                 if(vol == _VOLUMES) {
-#ifdef __AVR__
+#ifdef XMEM_MULTIPLE_APP
                         fs_err[xmem::getcurrentBank()] = FR_NO_PATH;
-#elif defined(CORE_TEENSY) && defined(__arm__)
+#else
                         fs_err = rc;
 #endif
                         return FR_NO_PATH;
                 }
                 if(vol != _fs_util_vol(newpath)) {
-#ifdef __AVR__
+#ifdef XMEM_MULTIPLE_APP
                         fs_err[xmem::getcurrentBank()] = FR_NO_PATH;
-#elif defined(CORE_TEENSY) && defined(__arm__)
+#else
                         fs_err = rc;
 #endif
                         return FR_NO_PATH;
@@ -1893,7 +1899,7 @@ extern "C" {
                 const char *oldpathtrunc = _fs_util_trunkpath(oldpath, vol);
                 const char *newpathtrunc = _fs_util_trunkpath(newpath, vol);
 
-#ifdef __AVR__
+#ifdef XMEM_MULTIPLE_APP
                 uint8_t *ptr;
                 fss_r8 *reply;
 
@@ -1916,7 +1922,7 @@ extern "C" {
                 rc = reply->res; // error code
                 fs_err[xmem::getcurrentBank()] = rc; // save it here in the event we want to use it.
                 free(reply);
-#elif defined(CORE_TEENSY) && defined(__arm__)
+#else
 
                 USB_ISR_PROTECTED_CALL() {
                         const char *oldname = _fs_util_FATpath(oldpathtrunc, vol);
@@ -1943,14 +1949,14 @@ extern "C" {
                 uint8_t vol = _fs_util_vol(path);
                 uint64_t rv = 0llu;
                 if(vol == _VOLUMES) {
-#ifdef __AVR__
+#ifdef XMEM_MULTIPLE_APP
                         fs_err[xmem::getcurrentBank()] = FR_NO_PATH;
-#elif defined(CORE_TEENSY) && defined(__arm__)
+#else
                         fs_err = rc;
 #endif
                         return FR_NO_PATH;
                 } else {
-#ifdef __AVR__
+#ifdef XMEM_MULTIPLE_APP
                         uint8_t *ptr;
                         fss_r8 *reply;
                         uint64_t *q;
@@ -1973,7 +1979,7 @@ extern "C" {
                         }
                         free(reply);
                 }
-#elif defined(CORE_TEENSY) && defined(__arm__)
+#else
 
                         USB_ISR_PROTECTED_CALL() {
                                 FATFS *fs;
@@ -1995,7 +2001,7 @@ extern "C" {
         char *fs_mount_lbl(uint8_t vol) {
                 uint8_t rc;
                 char *lbl = NULL;
-#ifdef __AVR__
+#ifdef XMEM_MULTIPLE_APP
                 fss_r8 *reply;
                 fss_opfd message = {
                         PIPE_MOUNT_LBL,
@@ -2012,7 +2018,7 @@ extern "C" {
                         strcpy(lbl, rlbl);
                 }
                 free(reply);
-#elif defined(CORE_TEENSY) && defined(__arm__)
+#else
 
                 USB_ISR_PROTECTED_CALL() {
                         rc = FR_NO_PATH;
@@ -2028,7 +2034,7 @@ extern "C" {
         }
 
         uint8_t fs_mountcount(void) {
-#ifdef __AVR__
+#ifdef XMEM_MULTIPLE_APP
                 uint8_t rc;
                 uint8_t message = PIPE_MOUNT_CNT;
                 fss_r8 *reply;
@@ -2038,7 +2044,7 @@ extern "C" {
                 fs_err[xmem::getcurrentBank()] = rc; // save it here in the event we want to use it.
                 message = reply->dat;
                 free(reply);
-#elif defined(CORE_TEENSY) && defined(__arm__)
+#else
                 uint8_t message = 0;
 
                 USB_ISR_PROTECTED_CALL() {
